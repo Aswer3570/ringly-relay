@@ -1,0 +1,7 @@
+/bin/
+/dist/
+/deploy/docker/config/
+*.toml
+!go.sum
+# локальные тестовые конфиги
+/tmp/

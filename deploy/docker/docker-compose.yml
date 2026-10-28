@@ -1,0 +1,35 @@
+# Ringly Relay в Docker. Все команды — из каталога deploy/docker:
+#
+#   docker compose run --rm relay setup     # настройка (один раз; повторный запуск правит конфиг)
+#   docker compose up -d --build            # запуск
+#   docker compose exec relay ringly-relay doctor   # проверка
+#   docker compose exec relay ringly-relay link     # ссылка-мостик (приватный режим)
+#   docker compose logs -f relay            # журнал
+#
+# host-сеть: TURN должен видеть реальные адреса (NAT ломает ICE), а мостику так проще всего
+# открыть 443. Если sing-box упадёт, демон завершится с ошибкой и Docker поднимет его заново.
+services:
+  relay:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: ringly-relay:local
+    # Только локальная сборка из этого репозитория, никогда не тянуть чужой образ из реестра:
+    # мостик проксирует чужой трафик, и бинарник должен соответствовать коду, который вы видите.
+    pull_policy: build
+    restart: unless-stopped
+    network_mode: host
+    # Набор по умолчанию у Docker и так их содержит; перечислены явно, потому что без них не
+    # работают entrypoint (chown, su-exec) и file capability sing-box на порт 443.
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+    volumes:
+      - ./config:/etc/ringly-relay
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
