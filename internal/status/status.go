@@ -1,7 +1,7 @@
-// Package status печатает текущее состояние демона по конфигу.
+// Package status prints the daemon's current configuration.
 //
-// Этап 1: читает конфиг и показывает, что настроено. Живую статистику (аптайм, объём трафика, связь
-// с control-сервером) добавит этап 3, когда появится runtime-состояние.
+// It reads the configuration and shows what is set up. Live numbers (traffic, connected clients) are
+// reported to the control server in auto mode and checked by `ringly-relay doctor`.
 package status
 
 import (
@@ -12,41 +12,41 @@ import (
 	"github.com/ringlymessenger/ringly-relay/internal/config"
 )
 
-// Print выводит сводку конфигурации демона.
+// Print prints a summary of the daemon's configuration.
 func Print(c config.Config, out io.Writer) {
-	fmt.Fprintln(out, "Ringly Relay — состояние")
+	fmt.Fprintln(out, "Ringly Relay — status")
 	fmt.Fprintf(out, "  origin:      %s\n", c.Origin.URL)
-	fmt.Fprintf(out, "  публикация:  %s\n", c.Publish.Mode)
+	fmt.Fprintf(out, "  publishing:  %s\n", c.Publish.Mode)
 
-	fmt.Fprintf(out, "  мостик:      %s\n", onOff(c.Bridge.Enabled))
+	fmt.Fprintf(out, "  bridge:      %s\n", onOff(c.Bridge.Enabled))
 	if c.Bridge.Enabled {
-		fmt.Fprintf(out, "               вход %s, SNI %s\n", c.Bridge.Listen, c.Reality.SNI)
+		fmt.Fprintf(out, "               entry %s, SNI %s\n", c.Bridge.Listen, c.Reality.SNI)
 		if pub, err := bridgelink.PublicFromPrivate(c.Reality.PrivateKey); err == nil {
 			fmt.Fprintf(out, "               Reality pubkey %s\n", pub)
 		}
 	}
 
-	fmt.Fprintf(out, "  звонки:      %s\n", onOff(c.Calls.Enabled))
+	fmt.Fprintf(out, "  calls:       %s\n", onOff(c.Calls.Enabled))
 	if c.Calls.Enabled {
-		fmt.Fprintf(out, "               TURN %s / TLS %s, публичный IP %s\n",
+		fmt.Fprintf(out, "               TURN %s / TLS %s, public IP %s\n",
 			c.Calls.TurnListen, c.Calls.TurnTLSListen, c.Calls.PublicIP)
 		tlsMode := "self-signed"
 		if c.Calls.TLSCert != "" {
-			tlsMode = "свой сертификат"
+			tlsMode = "own certificate"
 		}
-		fmt.Fprintf(out, "               TLS-сертификат: %s\n", tlsMode)
+		fmt.Fprintf(out, "               TLS certificate: %s\n", tlsMode)
 	}
 
 	if err := c.Validate(); err != nil {
-		fmt.Fprintf(out, "  ⚠️ конфиг:   %v\n", err)
+		fmt.Fprintf(out, "  ⚠️ config:   %v\n", err)
 	} else {
-		fmt.Fprintln(out, "  конфиг:      корректен")
+		fmt.Fprintln(out, "  config:      valid")
 	}
 }
 
 func onOff(b bool) string {
 	if b {
-		return "включён"
+		return "on"
 	}
-	return "выключен"
+	return "off"
 }

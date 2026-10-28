@@ -12,12 +12,12 @@ import (
 	"github.com/pion/turn/v4"
 )
 
-// restAuthHandler возвращает AuthHandler для coturn-совместимой REST-схемы временных кредов.
+// restAuthHandler returns an AuthHandler for the coturn-compatible REST scheme of temporary credentials.
 //
-// Клиент получает от control-сервера (или из ссылки): username = "<expiry-unix>[:uid]",
-// password = base64(HMAC-SHA1(secret, username)). Сервер по username сам вычисляет пароль тем же
-// секретом и строит ключ длительной аутентификации — совпадёт, только если клиент знал тот же секрет.
-// Просроченный username отвергается.
+// The client gets from the control server (or from a link): username = "<expiry-unix>[:uid]",
+// password = base64(HMAC-SHA1(secret, username)). The server computes the password from the username
+// with the same secret and builds the long-term authentication key — it matches only if the client knew
+// the same secret. An expired username is rejected.
 func restAuthHandler(secret, realm string, now func() time.Time) turn.AuthHandler {
 	return func(username, _ string, _ net.Addr) ([]byte, bool) {
 		if !usernameValid(username, now()) {
@@ -30,8 +30,8 @@ func restAuthHandler(secret, realm string, now func() time.Time) turn.AuthHandle
 	}
 }
 
-// usernameValid проверяет срок годности временного username (первое поле до ':' — unix-время
-// истечения). Пустой/некорректный срок считаем невалидным.
+// usernameValid checks the expiry of a temporary username (the first field before ':' is the unix expiry
+// time). An empty or malformed expiry counts as invalid.
 func usernameValid(username string, now time.Time) bool {
 	if username == "" {
 		return false

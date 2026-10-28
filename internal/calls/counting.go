@@ -8,11 +8,10 @@ import (
 	"github.com/ringlymessenger/ringly-relay/internal/stats"
 )
 
-// countingGenerator — обёртка над генератором relay-адресов pion: каждый выданный звонку relay-порт
-// считает прошедшие через него байты. Это сторона «relay ↔ собеседник», то есть весь медиапоток
-// звонка в одну ногу — именно столько трафика звонок стоит волонтёру (вторая нога «клиент ↔ TURN»
-// такая же по объёму). Считаются только размеры пакетов, их содержимое не трогаем — оно и так
-// зашифровано (SRTP).
+// countingGenerator — a wrapper around pion's relay address generator: every relay port handed to a
+// call counts the bytes passing through it. This is the "relay ↔ peer" side, i.e. the call's whole media
+// stream in one direction — exactly what a call costs the volunteer (the "client ↔ TURN" leg is the
+// same size). Only packet sizes are counted; the content is not touched — it is encrypted anyway (SRTP).
 type countingGenerator struct {
 	turn.RelayAddressGenerator
 	counters *stats.Counters

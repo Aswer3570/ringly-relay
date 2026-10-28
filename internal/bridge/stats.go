@@ -14,11 +14,11 @@ import (
 	"github.com/ringlymessenger/ringly-relay/internal/stats"
 )
 
-// Как часто спрашивать у sing-box трафик и подключения. Heartbeat уходит раз в минуту — 15 с с запасом.
+// How often to ask sing-box for traffic and connections. The heartbeat goes once a minute — 15 s is plenty.
 var statsInterval = 15 * time.Second
 
-// newStatsAPI — адрес и секрет API статистики для этого запуска sing-box: свободный порт только на
-// 127.0.0.1 и случайный секрет (на диск не пишется, живёт до перезапуска).
+// newStatsAPI — the statistics API address and secret for this sing-box run: a free port on 127.0.0.1
+// only and a random secret (never written to disk, lives until the restart).
 func newStatsAPI() (*singbox.StatsAPI, error) {
 	l, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -34,7 +34,7 @@ func newStatsAPI() (*singbox.StatsAPI, error) {
 	return &singbox.StatsAPI{Listen: addr, Secret: hex.EncodeToString(secret)}, nil
 }
 
-// snapshot — нужная нам часть ответа GET /connections (Clash API sing-box).
+// snapshot — the part of the GET /connections response we need (sing-box Clash API).
 type snapshot struct {
 	DownloadTotal int64 `json:"downloadTotal"`
 	UploadTotal   int64 `json:"uploadTotal"`
@@ -45,8 +45,9 @@ type snapshot struct {
 	} `json:"connections"`
 }
 
-// pollStats до завершения процесса (done) переносит из sing-box в счётчики демона прирост трафика
-// и число РАЗНЫХ подключённых клиентов. Адреса клиентов дальше этой функции не уходят — только счёт.
+// pollStats, until the process exits (done), moves the traffic increase and the number of DISTINCT
+// connected clients from sing-box into the daemon's counters. Client addresses never leave this
+// function — only the count.
 func pollStats(api *singbox.StatsAPI, counters *stats.Counters, done <-chan struct{}, log func(string)) {
 	client := &http.Client{Timeout: 3 * time.Second}
 	var lastTotal int64
@@ -55,8 +56,8 @@ func pollStats(api *singbox.StatsAPI, counters *stats.Counters, done <-chan stru
 	poll := func() {
 		snap, err := fetchSnapshot(client, api)
 		if err != nil {
-			if !failing { // одна строка на серию сбоев, а не каждые 15 с
-				log(fmt.Sprintf("статистика мостика недоступна: %v", err))
+			if !failing { // one line per series of failures, not every 15 s
+				log(fmt.Sprintf("bridge statistics unavailable: %v", err))
 				failing = true
 			}
 			return
@@ -64,7 +65,7 @@ func pollStats(api *singbox.StatsAPI, counters *stats.Counters, done <-chan stru
 		failing = false
 
 		total := snap.DownloadTotal + snap.UploadTotal
-		if total < lastTotal { // sing-box перезапускался — счёт начался заново
+		if total < lastTotal { // sing-box restarted — its count started over
 			lastTotal = 0
 		}
 		counters.AddBridgeBytes(total - lastTotal)

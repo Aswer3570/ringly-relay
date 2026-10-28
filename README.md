@@ -1,127 +1,150 @@
 # Ringly Relay
 
-Демон-ретранслятор для мессенджера Ringly. Доброволец поднимает его у себя на сервере — и помогает
-пользователям в регионах с блокировками достучаться до Ringly, оставаясь мостиком между приложением
-и основным сервером.
+Volunteer relay for the **Ringly** messenger. Run it on any Linux server and help people in
+countries that block messengers reach Ringly — for messages and, optionally, calls.
 
-**Трафик сквозь ретранслятор зашифрован end-to-end.** Демон пересылает шифртекст и не может прочитать
-ни сообщения, ни звонки — у него нет и не может быть ключей.
+[Releases](https://github.com/ringlymessenger/ringly-relay/releases) · [Ringly for iOS](https://github.com/ringlymessenger/ringly-ios) · [ringlyapp.net](https://ringlyapp.net)
 
-Открытый исходник и воспроизводимая сборка — намеренно: мостик проксирует чужой трафик, поэтому вы
-должны иметь возможность собрать его сами и убедиться, что бинарник соответствует коду.
+## What it does
 
-> Исходный код приложения Ringly для iOS — [ringlymessenger/ringly-ios](https://github.com/ringlymessenger/ringly-ios).
-> Нашли уязвимость — см. [SECURITY.md](SECURITY.md).
-
-## Возможности
-
-Один демон, три роли — включаются по отдельности в мастере:
-
-| Модуль | Что делает | Стоимость | По умолчанию |
+| Module | What it does | Costs you | Default |
 |---|---|---|---|
-| Мостик сообщений | обфусцированный вход (Reality) → прокси на основной сервер | копейки | вкл |
-| Ретранслятор звонков (TURN) | пропускает голос/видео, UDP + фолбэк TLS/443 | трафик | выкл |
-| Публикация | `auto` (сервер раздаёт вас пользователям) или `private` (раздаёте ссылку сами) | — | выбор |
+| **Message bridge** | a disguised entry point (VLESS + Reality on port 443) that the app tunnels its requests to the Ringly server through | almost nothing | on |
+| **Call relay (TURN)** | relays voice and video when a direct connection is blocked | bandwidth | off |
+| **Publishing** | `auto` — the Ringly server hands your relay out to users; `private` — you share a bridge link yourself | — | your choice |
 
-## Установка
+## What a relay can and cannot see
 
-Нужен VPS с Linux и открытым портом **443/tcp** (если у хостера есть свой фаервол или «security
-group» — откройте порт и там). Настраивать конфиг руками не нужно: мастер всё спросит, проверит
-и подставит сам.
+- **Messages and calls are end-to-end encrypted on the devices.** The relay only ever forwards
+  ciphertext and has no keys to read it.
+- Your server sees the **IP addresses** of people connecting to it — like any server. The daemon does
+  not write them to its log and does not send them anywhere.
+- In `auto` mode the daemon reports to the Ringly server **only numbers**: that it is alive, how many
+  bytes went through it and how many clients and calls are connected right now.
+- The bridge only forwards traffic to Ringly servers (`*.ringlyapp.net`); any other destination is
+  rejected, so your server can't be used as a general-purpose proxy.
+- From the outside the bridge looks like an ordinary website with a real certificate of the cover
+  domain you choose.
 
-### Docker (рекомендуется)
+## Requirements
 
-Нужны `git` и Docker с плагином Compose. sing-box уже внутри образа — ставить его отдельно не надо.
+- A Linux VPS (x86-64 or ARM64). 1 vCPU and 512 MB RAM are plenty for the message bridge.
+- Open ports:
+  - **443/tcp** — message bridge;
+  - for the call relay: **3478/udp + 3478/tcp**, **5349/tcp** (TURN over TLS) and the UDP range the
+    system uses for outgoing ports (Linux default: 32768–60999).
+
+If your provider has its own firewall or "security group", open the ports there too.
+
+## Quick start (Docker)
+
+You need `git` and Docker with the Compose plugin. sing-box is already inside the image.
 
 ```bash
 git clone https://github.com/ringlymessenger/ringly-relay
 cd ringly-relay/deploy/docker
-docker compose run --rm relay setup      # ответить на вопросы (Enter = значение по умолчанию)
-docker compose up -d --build             # запустить
-docker compose exec relay ringly-relay doctor   # проверить: всё должно быть с ✓
+docker compose run --rm relay setup             # answer the questions (Enter = default)
+docker compose up -d --build                    # start
+docker compose exec relay ringly-relay doctor   # check: everything should be ✓
 ```
 
-Ссылка-мостик для приватного режима печатается в журнале при каждом запуске
-(`docker compose logs relay`) или командой `docker compose exec relay ringly-relay link`.
+The image is always **built locally from this repository** (`pull_policy: build`) — no prebuilt image
+from a registry, so what runs is exactly the code you see.
 
-Обновление: `git pull && docker compose up -d --build`. Если sing-box упадёт, демон завершится
-с ошибкой, и Docker поднимет его заново сам.
+**Private mode:** the bridge link is printed in the log on every start (`docker compose logs relay`)
+or by `docker compose exec relay ringly-relay link`. Paste it in Ringly → Profile → Censorship bypass,
+or share it with people you trust.
 
-### Бинарник + systemd
-
-Для тех, кто не хочет Docker. Нужен sing-box 1.12+ в `PATH` (https://sing-box.sagernet.org);
-право слушать порт 443 ему выдаёт юнит systemd (`AmbientCapabilities`).
+**Updating:**
 
 ```bash
-make dist                       # соберёт dist/ringly-relay-linux-{amd64,arm64} + SHA256SUMS
-sudo cp dist/ringly-relay-linux-amd64 /usr/local/bin/ringly-relay
+cd ringly-relay && git pull && cd deploy/docker && docker compose up -d --build
+```
+
+Your configuration and the relay's identity (`deploy/docker/config/`) are not touched by updates.
+
+## Without Docker (binary + systemd)
+
+Download `ringly-relay-linux-amd64` or `-arm64` and `SHA256SUMS` from
+[Releases](https://github.com/ringlymessenger/ringly-relay/releases) (or build them yourself, see
+below), check the sum and install. You also need [sing-box](https://sing-box.sagernet.org) 1.12+ in
+`PATH`; the systemd unit gives it the right to listen on port 443.
+
+```bash
+shasum -a 256 -c SHA256SUMS --ignore-missing
+sudo install -m 755 ringly-relay-linux-amd64 /usr/local/bin/ringly-relay
 sudo useradd -r -s /sbin/nologin ringly-relay
-sudo ringly-relay setup         # интерактивная настройка → /etc/ringly-relay/config.toml
+sudo ringly-relay setup                         # → /etc/ringly-relay/config.toml
 sudo cp deploy/systemd/ringly-relay.service /etc/systemd/system/
 sudo systemctl enable --now ringly-relay
 sudo ringly-relay doctor
 ```
 
-## Команды
+## Commands
 
 ```
-ringly-relay setup     # интерактивная настройка, пишет конфиг (повторный запуск — правка)
-ringly-relay run       # запуск по конфигу
-ringly-relay doctor    # проверка установки по пунктам, с подсказками
-ringly-relay status    # что настроено сейчас
-ringly-relay link      # ссылка-мостик для приватного режима (--host, если адрес не определился сам)
+ringly-relay setup     # interactive setup; run again to change settings
+ringly-relay run       # run with the current configuration
+ringly-relay doctor    # step-by-step check with hints
+ringly-relay status    # what is configured
+ringly-relay link      # bridge link for private mode (--host if the address wasn't detected)
+ringly-relay --version
 ```
 
-Общий флаг `-c/--config` задаёт путь к конфигу (по умолчанию `/etc/ringly-relay/config.toml`).
+`-c/--config` sets the configuration path (default `/etc/ringly-relay/config.toml`).
 
-## Если что-то не работает
+## Troubleshooting
 
-Сначала `ringly-relay doctor` — он проверяет всё по порядку и говорит, что делать.
+Start with `ringly-relay doctor` — it checks everything in order and says what to do.
 
-| Симптом | Причина и что делать |
+| Symptom | What to do |
 |---|---|
-| `не найден sing-box` | установка без Docker: поставьте sing-box 1.12+; в Docker-образе он есть всегда |
-| `bind: permission denied` на 443 | Docker: пересоберите образ (`docker compose up -d --build`); без Docker: юнит systemd из `deploy/systemd` или `sudo setcap cap_net_bind_service=+ep $(command -v sing-box)` |
-| `порт 443 уже занят` | на сервере работает веб-сервер; освободите порт или выберите другой в `setup` |
-| `домен маскировки … недоступен` | выберите другой домен в `setup` — сайт должен открываться с вашего сервера по TLS 1.3 |
-| `сервер Ringly недоступен` | у VPS нет выхода к api.ringlyapp.net — проверьте DNS и исходящий трафик |
-| всё ✓, но клиенты не подключаются | порт 443 закрыт фаерволом хостера; `doctor` снаружи это проверить не может |
+| `sing-box not found` | without Docker: install sing-box 1.12+ (the Docker image always has it) |
+| `bind: permission denied` on 443 | Docker: rebuild (`docker compose up -d --build`); without Docker: use the systemd unit from `deploy/systemd` |
+| `port 443 is already in use` | a web server is running; free the port or choose another one in `setup` |
+| `cover domain: … is unreachable from this server` | choose another domain in `setup` — it must open from your server over TLS 1.3 |
+| `test connection through the bridge` fails | the cover domain doesn't work with Reality (www.microsoft.com is known not to) — choose another one in `setup`, e.g. `dl.google.com` |
+| `the Ringly server is unreachable from this VPS` | the server can't reach api.ringlyapp.net — check DNS and outgoing traffic |
+| all ✓, but clients can't connect | the port is closed by the provider's firewall; `doctor` can't check that from the inside |
 
-В журнал не пишутся адреса пользователей — `doctor` показывает только число подключений.
+In `auto` mode the relay registers once and keeps its token in `state.json` next to the configuration
+(under systemd — in `/var/lib/ringly-relay`). Don't delete it: the relay would register again as a new one.
 
-В режиме `auto` демон регистрируется в пуле один раз и хранит свой токен в `state.json` рядом с
-конфигом (под systemd — в `/var/lib/ringly-relay`). Перезапуски и обновления его не трогают; удалять
-этот файл не нужно — иначе демон зарегистрируется заново как новый мостик.
+## How it works
 
-## Сборка из исходников
+- **Message bridge** — VLESS + Reality via the reference [sing-box](https://sing-box.sagernet.org)
+  binary, supervised by the daemon (`internal/singbox`, `internal/bridge`). Reality is not
+  re-implemented here. Routing rules allow only Ringly hosts as destinations.
+- **Call relay** — TURN on [pion/turn](https://github.com/pion/turn) (`internal/calls`): UDP, TCP and
+  TURN over TLS. Short-lived credentials are issued by the Ringly server (coturn-compatible REST
+  scheme); every relay has its own secret.
+- **Publishing** (`internal/publisher`) — registration in the relay pool and a heartbeat once a
+  minute. The shared registration secret is in the code on purpose: it filters accidental spam and is
+  not a security boundary.
+- **Accounting** (`internal/stats`) — byte counters and connection counts only; bridge traffic comes
+  from sing-box's built-in statistics API, which listens on `127.0.0.1` with a random secret.
+
+## Building from source
+
+Go 1.27+:
 
 ```bash
-make build   # bin/ringly-relay
-make test    # юнит-тесты
-make vet     # статический анализ
+make build    # bin/ringly-relay
+make test
+make vet
+make dist     # dist/ringly-relay-linux-{amd64,arm64} + SHA256SUMS
 ```
 
-## Как это устроено
+`make dist` builds with `-trimpath`, CGO off and fixed flags, so the same tag built with the same Go
+version gives the same binaries — compare your sums with the ones in a release
+(`make dist VERSION=v0.1.0`; the Go version is noted in the release).
 
-- **Мостик сообщений** — VLESS + Reality на порту 443. Снаружи он выглядит как обычный сайт с
-  настоящим сертификатом выбранного домена маскировки; приложение по ключу Reality узнаёт мостик и
-  проводит через него свои запросы к серверу Ringly. Reality не пишется заново: демон супервизирует
-  эталонный бинарник [sing-box](https://sing-box.sagernet.org) (`internal/singbox`, `internal/bridge`).
-- **Ретранслятор звонков** — TURN на [pion/turn](https://github.com/pion/turn) (`internal/calls`):
-  UDP, TCP и TURN-over-TLS на случай, когда UDP душат. Временные доступы выдаёт сервер Ringly
-  (coturn-совместимая REST-схема), у каждого демона свой секрет.
-- **Публикация** (`internal/publisher`) — в режиме `auto` демон регистрируется в пуле и раз в минуту
-  сообщает, что жив. Общий секрет регистрации вшит в код открыто: это барьер от случайного спама,
-  а не защита.
-- **Учёт** (`internal/stats`) — в отчёте на сервер **только числа**: сколько байт прошло через мостик
-  и TURN и сколько клиентов и звонков подключено сейчас. Адреса пользователей на сервер не уходят и в
-  журнал не пишутся. Трафик мостика берётся из встроенного API статистики sing-box, который слушает
-  только `127.0.0.1` со случайным секретом.
+## Security
 
-Содержимое сообщений и звонков ретранслятору недоступно: оно зашифровано end-to-end ещё на
-устройствах, демон видит только шифртекст.
+Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY.md).
 
-## Лицензия
+## License
 
-MIT — см. [LICENSE](LICENSE). libsignal здесь не используется (демон форвардит шифртекст, не
-расшифровывая), поэтому AGPL приложения на ретранслятор не распространяется.
+MIT — see [LICENSE](LICENSE). The relay does not use libsignal (it forwards ciphertext without
+decrypting it), so the AGPL of the Ringly app does not apply here.
+

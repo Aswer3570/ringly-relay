@@ -1,26 +1,26 @@
-# Ringly Relay в Docker. Все команды — из каталога deploy/docker:
+# Ringly Relay in Docker. Run every command from the deploy/docker directory:
 #
-#   docker compose run --rm relay setup     # настройка (один раз; повторный запуск правит конфиг)
-#   docker compose up -d --build            # запуск
-#   docker compose exec relay ringly-relay doctor   # проверка
-#   docker compose exec relay ringly-relay link     # ссылка-мостик (приватный режим)
-#   docker compose logs -f relay            # журнал
+#   docker compose run --rm relay setup     # setup (once; running it again edits the config)
+#   docker compose up -d --build            # start
+#   docker compose exec relay ringly-relay doctor   # check
+#   docker compose exec relay ringly-relay link     # bridge link (private mode)
+#   docker compose logs -f relay            # logs
 #
-# host-сеть: TURN должен видеть реальные адреса (NAT ломает ICE), а мостику так проще всего
-# открыть 443. Если sing-box упадёт, демон завершится с ошибкой и Docker поднимет его заново.
+# Host networking: TURN must see real addresses (NAT breaks ICE), and it's the simplest way for the
+# bridge to open 443. If sing-box crashes, the daemon exits with an error and Docker restarts it.
 services:
   relay:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
     image: ringly-relay:local
-    # Только локальная сборка из этого репозитория, никогда не тянуть чужой образ из реестра:
-    # мостик проксирует чужой трафик, и бинарник должен соответствовать коду, который вы видите.
+    # Only a local build from this repository, never someone else's image from a registry:
+    # the bridge proxies other people's traffic, and the binary must match the code you can read.
     pull_policy: build
     restart: unless-stopped
     network_mode: host
-    # Набор по умолчанию у Docker и так их содержит; перечислены явно, потому что без них не
-    # работают entrypoint (chown, su-exec) и file capability sing-box на порт 443.
+    # Docker's default set already includes these; they're listed explicitly because the entrypoint
+    # (chown, su-exec) and sing-box's file capability for port 443 don't work without them.
     cap_add:
       - CHOWN
       - SETUID

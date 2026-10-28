@@ -1,28 +1,28 @@
-// Package stats — счётчики трафика и подключений, которые демон отправляет на control-сервер.
+// Package stats — traffic and connection counters the daemon sends to the control server.
 //
-// Только суммы и числа — ни адресов, ни идентификаторов клиентов: сервер (и админка) узнают «сколько»,
-// но не «кто». Байты копятся как прирост с прошлого успешного heartbeat: отправили — вычли
-// отправленное (Commit), heartbeat не прошёл — прирост едет со следующим, ничего не теряется.
+// Totals and counts only — no client addresses or identifiers: the server learns "how many", never
+// "who". Bytes accumulate as the increase since the last successful heartbeat: once sent, the sent part
+// is subtracted (Commit); if a heartbeat fails, the increase goes with the next one — nothing is lost.
 //
-// Все методы безопасны для nil-указателя: модуль, которому счётчики не передали (тесты, ручной
-// запуск без публикации), просто ничего не считает.
+// All methods are safe on a nil pointer: a module without counters (tests, a manual run without
+// publishing) simply counts nothing.
 package stats
 
 import "sync/atomic"
 
-// Counters разделяются между модулями мостика, звонков и публикатором.
+// Counters are shared by the bridge, calls and publisher modules.
 type Counters struct {
-	bridgeBytes   atomic.Int64 // прирост трафика мостика сообщений с прошлого отчёта
-	callsBytes    atomic.Int64 // прирост трафика звонков (TURN) с прошлого отчёта
-	bridgeClients atomic.Int64 // сейчас подключено к мостику (разных клиентов)
-	callsActive   atomic.Int64 // сейчас идёт звонков через TURN (аллокаций)
-	bridgeKnown   atomic.Bool  // статистика мостика вообще доступна (sing-box её отдаёт)
+	bridgeBytes   atomic.Int64 // message bridge traffic since the last report
+	callsBytes    atomic.Int64 // call (TURN) traffic since the last report
+	bridgeClients atomic.Int64 // connected to the bridge now (distinct clients)
+	callsActive   atomic.Int64 // calls through TURN right now (allocations)
+	bridgeKnown   atomic.Bool  // bridge statistics are available at all (sing-box provides them)
 }
 
-// New создаёт пустые счётчики.
+// New creates empty counters.
 func New() *Counters { return &Counters{} }
 
-// Report — то, что уходит в heartbeat.
+// Report — what goes into the heartbeat.
 type Report struct {
 	BridgeBytes   int64
 	CallsBytes    int64
@@ -56,7 +56,7 @@ func (c *Counters) SetCallsActive(n int64) {
 	}
 }
 
-// Snapshot — текущие значения для отчёта (прирост байтов при этом не сбрасывается).
+// Snapshot — the current values for a report (the byte increase is not reset).
 func (c *Counters) Snapshot() Report {
 	if c == nil {
 		return Report{}
@@ -70,8 +70,8 @@ func (c *Counters) Snapshot() Report {
 	}
 }
 
-// Commit вычитает уже доставленный на сервер прирост. Вычитание, а не обнуление: байты, накопленные
-// пока шёл запрос, остаются на следующий отчёт.
+// Commit subtracts the increase already delivered to the server. Subtracting rather than resetting:
+// bytes accumulated while the request was in flight stay for the next report.
 func (c *Counters) Commit(sent Report) {
 	if c == nil {
 		return

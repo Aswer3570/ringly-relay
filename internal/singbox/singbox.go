@@ -1,12 +1,16 @@
-// Package singbox генерирует конфиг sing-box для мостика сообщений (VLESS + Reality).
+// Package singbox generates the sing-box configuration for the message bridge (VLESS + Reality).
 //
-// Мы не встраиваем sing-box библиотекой (огромное дерево зависимостей, хрупкий API), а супервизируем
-// эталонный бинарник (см. internal/bridge). Здесь — только генерация корректного JSON-конфига из
-// нашего config.Config.
+// sing-box is not embedded as a library (a huge dependency tree and a fragile API) — the daemon
+// supervises the reference binary instead (see internal/bridge). This package only turns our
+// config.Config into a valid sing-box JSON configuration.
 //
-// Схема: VLESS-inbound с TLS/Reality принимает клиента; direct-outbound дозванивается до адреса,
-// который запросил клиент (в нашем случае — origin приложения). Reality-зонд, постучавшийся на порт,
-// проксируется на реальный SNI-домен и видит его настоящий сертификат.
+// Layout: a VLESS inbound with TLS/Reality accepts the client; a direct outbound connects to the
+// destination the client asked for. A Reality probe knocking on the port is proxied to the real cover
+// domain and sees its genuine certificate.
+//
+// Destinations are restricted: the bridge exists for the Ringly app only, so connections are allowed
+// to Ringly's own hosts and rejected otherwise. Without this rule anyone holding a bridge link could
+// use the volunteer's server as a general-purpose proxy.
 package singbox
 
 import (
@@ -17,21 +21,28 @@ import (
 	"github.com/ringlymessenger/ringly-relay/internal/config"
 )
 
-// StatsAPI — встроенный API статистики sing-box (Clash API), откуда демон берёт трафик мостика и
-// число подключённых клиентов. Слушает ТОЛЬКО 127.0.0.1 и требует секрет: снаружи он не виден.
-// Есть в официальной сборке sing-box (тег with_clash_api).
+// AllowedDomainSuffixes — where the app is allowed to go through a bridge: the API and WebSocket,
+// media links and the central TURN server for calls all live under these domains. A domain suffix
+// matches the domain itself and all its subdomains.
+var AllowedDomainSuffixes = []string{"ringlyapp.net"}
+
+const inboundTag = "vless-in"
+
+// StatsAPI — sing-box's built-in statistics API (Clash API), where the daemon reads the bridge
+// traffic and the number of connected clients. It listens ONLY on 127.0.0.1 and requires a secret,
+// so it is invisible from the outside. The official sing-box build includes it (tag with_clash_api).
 type StatsAPI struct {
-	Listen string // "127.0.0.1:<порт>"
+	Listen string // "127.0.0.1:<port>"
 	Secret string
 }
 
-// BridgeConfig собирает JSON-конфиг sing-box для включённого мостика сообщений.
+// BridgeConfig builds the sing-box JSON configuration for an enabled message bridge.
 func BridgeConfig(c config.Config) ([]byte, error) { return BridgeConfigWithStats(c, nil) }
 
-// BridgeConfigWithStats — то же, плюс API статистики (nil — без него).
+// BridgeConfigWithStats — the same plus the statistics API (nil — without it).
 func BridgeConfigWithStats(c config.Config, api *StatsAPI) ([]byte, error) {
 	if !c.Bridge.Enabled {
-		return nil, fmt.Errorf("мостик сообщений выключен")
+		return nil, fmt.Errorf("the message bridge is disabled")
 	}
 	port, err := config.PortFromListen(c.Bridge.Listen)
 	if err != nil {
@@ -42,7 +53,7 @@ func BridgeConfigWithStats(c config.Config, api *StatsAPI) ([]byte, error) {
 		Log: logConf{Level: "warn"},
 		Inbounds: []inbound{{
 			Type:       "vless",
-			Tag:        "vless-in",
+			Tag:        inboundTag,
 			Listen:     "::",
 			ListenPort: port,
 			Users: []vlessUser{{
@@ -64,6 +75,17 @@ func BridgeConfigWithStats(c config.Config, api *StatsAPI) ([]byte, error) {
 			},
 		}},
 		Outbounds: []outbound{{Type: "direct", Tag: "direct"}},
+		Route: route{
+			Rules: []rule{
+				// The app names the host (HTTP CONNECT through the tunnel), so the domain is usually
+				// known; sniffing recovers it from TLS SNI when a client connects by IP.
+				{Inbound: []string{inboundTag}, Action: "sniff"},
+				{DomainSuffix: AllowedDomainSuffixes, Action: "route", Outbound: "direct"},
+				// everything else that came through the bridge is refused
+				{Inbound: []string{inboundTag}, Action: "reject"},
+			},
+			Final: "direct",
+		},
 	}
 	if api != nil {
 		conf.Experimental = &experimental{ClashAPI: clashAPI{ExternalController: api.Listen, Secret: api.Secret}}
@@ -72,13 +94,26 @@ func BridgeConfigWithStats(c config.Config, api *StatsAPI) ([]byte, error) {
 	return json.MarshalIndent(conf, "", "  ")
 }
 
-// --- подмножество схемы конфига sing-box, которое мы задаём ---
+// --- the subset of the sing-box configuration schema we set ---
 
 type singboxConf struct {
 	Log          logConf       `json:"log"`
 	Inbounds     []inbound     `json:"inbounds"`
 	Outbounds    []outbound    `json:"outbounds"`
+	Route        route         `json:"route"`
 	Experimental *experimental `json:"experimental,omitempty"`
+}
+
+type route struct {
+	Rules []rule `json:"rules"`
+	Final string `json:"final"`
+}
+
+type rule struct {
+	Inbound      []string `json:"inbound,omitempty"`
+	DomainSuffix []string `json:"domain_suffix,omitempty"`
+	Action       string   `json:"action"`
+	Outbound     string   `json:"outbound,omitempty"`
 }
 
 type experimental struct {

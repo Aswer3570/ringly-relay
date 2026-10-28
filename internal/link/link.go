@@ -1,8 +1,9 @@
-// Package link печатает ссылку-мостик для приватного режима (раздаётся из рук в руки).
+// Package link prints the bridge link for private mode (shared by hand).
 //
-// В приватном режиме control-сервер о демоне не знает; единственный способ передать мостик — эта
-// ссылка. Публичный адрес берётся из --host, иначе из конфига (publish.public_host, calls.public_ip),
-// иначе определяется по исходящему интерфейсу. За NAT определить его нельзя — тогда просим --host.
+// In private mode the control server doesn't know about the daemon; this link is the only way to hand
+// out the bridge. The public address comes from --host, otherwise from the configuration
+// (publish.public_host, calls.public_ip), otherwise from the outgoing interface. Behind NAT it can't be
+// detected — then --host is required.
 package link
 
 import (
@@ -14,10 +15,10 @@ import (
 	"github.com/ringlymessenger/ringly-relay/internal/netcheck"
 )
 
-// Print формирует и печатает ссылку-мостик. host — публичный адрес демона (IP или домен).
+// Print builds and prints the bridge link. host — the daemon's public address (IP or domain).
 func Print(c config.Config, host string, out io.Writer) error {
 	if !c.Bridge.Enabled {
-		return fmt.Errorf("мостик сообщений выключен — ссылку выдавать нечему")
+		return fmt.Errorf("the message bridge is off — there is nothing to link to")
 	}
 	if host == "" {
 		host = firstNonEmpty(c.Publish.PublicHost, c.Calls.PublicIP)
@@ -25,7 +26,7 @@ func Print(c config.Config, host string, out io.Writer) error {
 	if host == "" {
 		ip, err := netcheck.PublicIP()
 		if err != nil {
-			return fmt.Errorf("%v\nукажите адрес: ringly-relay link --host <ip-или-домен>", err)
+			return fmt.Errorf("%v\nset the address: ringly-relay link --host <ip-or-domain>", err)
 		}
 		host = ip
 	}
@@ -51,7 +52,7 @@ func Print(c config.Config, host string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "Ссылка-мостик (передайте пользователю):")
+	fmt.Fprintln(out, "Bridge link (give it to the user):")
 	fmt.Fprintln(out, s)
 	return nil
 }

@@ -1,13 +1,13 @@
-// Package setup — интерактивный мастер первоначальной настройки демона.
+// Package setup — the interactive first-time setup wizard.
 //
-// Спрашивает по одному тумблеру с объяснением последствий, генерирует ключи Reality и пишет конфиг.
-// Ретранслятор звонков выключен по умолчанию сознательно: он качает через себя весь голос/видео,
-// а мостик сообщений почти ничего не потребляет — доброволец должен включить звонки осознанно.
+// It asks one toggle at a time, explaining the consequences, generates the Reality keys and writes
+// the configuration. The call relay is off by default on purpose: it carries all voice and video,
+// while the message bridge uses almost nothing — a volunteer should enable calls deliberately.
 //
-// Принцип: человек не должен править конфиг руками. Поэтому мастер не спрашивает то, на что у
-// новичка нет ответа (адреса origin/control — у них верные значения по умолчанию), сам подставляет
-// публичный IP, чистит следы копирования (экранирование и разметку Markdown) и проверяет каждое
-// поле сразу — с повторным вопросом, а не ошибкой в конце или падением sing-box при запуске.
+// Principle: nobody should have to edit the configuration by hand. So the wizard doesn't ask what a
+// newcomer has no answer to (the origin/control addresses have correct defaults), fills in the public
+// IP itself, cleans up copy-paste leftovers (Markdown escaping and markup) and validates every field
+// right away — asking again instead of failing at the end or crashing sing-box at startup.
 package setup
 
 import (
@@ -24,93 +24,95 @@ import (
 	"github.com/ringlymessenger/ringly-relay/internal/netcheck"
 )
 
-// Проверка домена Reality с сервера. Переменная — чтобы тесты мастера не ходили в сеть.
+// Checking the Reality domain from the server. A variable so the wizard's tests don't use the network.
 var checkRealityTarget = func(host string) error {
 	_, err := netcheck.RealityTarget(host, 5*time.Second)
 	return err
 }
 
-// Определение публичного адреса. Переменная — по той же причине.
+// Public address detection. A variable for the same reason.
 var detectPublicIP = netcheck.PublicIP
 
-// Run проводит мастер, читая ответы из in и печатая в out, и возвращает готовый конфиг.
+// Run walks through the wizard, reading answers from in and printing to out, and returns the
+// finished configuration.
 func Run(in io.Reader, out io.Writer, existing *config.Config) (config.Config, error) {
 	r := bufio.NewReader(in)
 	p := &prompt{r: r, out: out}
 
 	c := config.Default()
 	if existing != nil {
-		c = *existing // повторный запуск правит существующий конфиг
+		c = *existing // running again edits the existing configuration
 	}
 
-	fmt.Fprintln(out, "Настройка Ringly Relay")
-	fmt.Fprintln(out, "Доброволец-ретранслятор помогает пользователям обходить блокировки.")
-	fmt.Fprintln(out, "Трафик сквозь вас зашифрован — прочитать его нельзя.")
+	fmt.Fprintln(out, "Ringly Relay setup")
+	fmt.Fprintln(out, "A volunteer relay helps people get around blocking.")
+	fmt.Fprintln(out, "Traffic through you is encrypted — it can't be read.")
 	fmt.Fprintln(out, strings.Repeat("─", 60))
 
-	// Адреса сервера Ringly не спрашиваем: у них верные значения по умолчанию, а новичок их не знает.
-	// Если в старом конфиге они испорчены копированием — чиним молча.
+	// The Ringly server addresses are not asked: they have correct defaults and a newcomer doesn't
+	// know them. If copy-paste broke them in an old configuration, fix them silently.
 	c.Origin.URL = config.NormalizeURL(c.Origin.URL)
 	c.Origin.Control = config.NormalizeURL(firstNonEmpty(c.Origin.Control, c.Origin.URL))
 
 	publicIP, ipErr := detectPublicIP()
 
-	// --- Мостик сообщений ---
-	fmt.Fprintln(out, "\n[1/3] Мостик сообщений — пересылает зашифрованный трафик приложения.")
-	fmt.Fprintln(out, "      Почти не расходует трафик. Рекомендуется включить.")
-	c.Bridge.Enabled = p.yesNo("Включить мостик сообщений?", c.Bridge.Enabled)
+	// --- Message bridge ---
+	fmt.Fprintln(out, "\n[1/3] Message bridge — forwards the app's encrypted traffic.")
+	fmt.Fprintln(out, "      Uses almost no traffic. Recommended.")
+	c.Bridge.Enabled = p.yesNo("Enable the message bridge?", c.Bridge.Enabled)
 	if c.Bridge.Enabled {
-		c.Bridge.Listen = p.valid("  Порт входа (443 = маскировка под HTTPS)", c.Bridge.Listen, normalizeListen, validListen)
-		fmt.Fprintln(out, "  Домен для маскировки: мостик выдаёт себя за этот сайт. Лучше крупный сайт,")
-		fmt.Fprintln(out, "  который хостится недалеко от вашего сервера. Сайт должен открываться с сервера.")
+		c.Bridge.Listen = p.valid("  Entry port (443 = looks like HTTPS)", c.Bridge.Listen, normalizeListen, validListen)
+		fmt.Fprintln(out, "  Cover domain: the bridge pretends to be this website. A large site hosted")
+		fmt.Fprintln(out, "  close to your server works best. It must open from this server.")
 		for {
-			c.Reality.SNI = p.valid("  Домен", config.NormalizeHost(c.Reality.SNI), config.NormalizeHost, config.ValidateHost)
-			fmt.Fprintf(out, "  проверяю %s с этого сервера…\n", c.Reality.SNI)
+			c.Reality.SNI = p.valid("  Domain", config.NormalizeHost(c.Reality.SNI), config.NormalizeHost, config.ValidateHost)
+			fmt.Fprintf(out, "  checking %s from this server…\n", c.Reality.SNI)
 			if err := checkRealityTarget(c.Reality.SNI); err != nil {
 				fmt.Fprintf(out, "  ⚠️ %v\n", err)
-				if !p.yesNo("  Оставить этот домен всё равно?", false) {
+				if !p.yesNo("  Keep this domain anyway?", false) {
 					continue
 				}
 			} else {
-				fmt.Fprintln(out, "  ✓ домен подходит")
+				fmt.Fprintln(out, "  ✓ the domain is suitable")
 			}
 			break
 		}
 	}
 
-	// --- Ретранслятор звонков ---
-	fmt.Fprintln(out, "\n[2/3] Ретранслятор звонков (TURN) — пропускает через себя голос и видео.")
-	fmt.Fprintln(out, "      ⚠️ Это РЕАЛЬНЫЙ трафик (десятки–сотни МБ за звонок). По умолчанию выключено.")
-	c.Calls.Enabled = p.yesNo("Включить ретранслятор звонков?", c.Calls.Enabled)
+	// --- Call relay ---
+	fmt.Fprintln(out, "\n[2/3] Call relay (TURN) — carries voice and video through your server.")
+	fmt.Fprintln(out, "      ⚠️ This is REAL traffic (tens to hundreds of MB per call). Off by default.")
+	c.Calls.Enabled = p.yesNo("Enable the call relay?", c.Calls.Enabled)
 	if c.Calls.Enabled {
-		c.Calls.TurnListen = p.text("  TURN-порт (UDP+TCP)", c.Calls.TurnListen)
-		c.Calls.TurnTLSListen = p.text("  TURN-over-TLS порт (фолбэк под DPI на UDP)", c.Calls.TurnTLSListen)
-		c.Calls.TrafficCapGB = p.intVal("  Месячный лимит трафика, ГБ (0 = без лимита)", c.Calls.TrafficCapGB)
-		fmt.Fprintln(out, "  Публичный IP обязателен: без него relay раздаётся на внутренний адрес.")
+		c.Calls.TurnListen = p.text("  TURN port (UDP+TCP)", c.Calls.TurnListen)
+		c.Calls.TurnTLSListen = p.text("  TURN over TLS port (fallback when UDP is throttled)", c.Calls.TurnTLSListen)
+		c.Calls.TrafficCapGB = p.intVal("  Monthly traffic limit, GB (0 = unlimited)", c.Calls.TrafficCapGB)
+		fmt.Fprintln(out, "  The public IP is required: without it the relay hands out an internal address.")
 		if ipErr != nil {
 			fmt.Fprintf(out, "  ⚠️ %v\n", ipErr)
 		}
-		c.Calls.PublicIP = p.valid("  Публичный IP этого сервера", firstNonEmpty(c.Calls.PublicIP, publicIP), strings.TrimSpace, validIP)
+		c.Calls.PublicIP = p.valid("  Public IP of this server", firstNonEmpty(c.Calls.PublicIP, publicIP), strings.TrimSpace, validIP)
 	}
 
-	// --- Режим публикации ---
-	fmt.Fprintln(out, "\n[3/3] Режим публикации:")
-	fmt.Fprintln(out, "      auto    — сервер узнаёт о вас и раздаёт мостик пользователям по когортам")
-	fmt.Fprintln(out, "      private — сервер о вас не знает; ссылку раздаёте сами (`ringly-relay link`)")
-	c.Publish.Mode = p.choice("Режим публикации", []string{config.ModeAuto, config.ModePrivate}, c.Publish.Mode)
-	// секрет регистрации вшит в демон (config.DefaultEnrollSecret) — не спрашиваем
+	// --- Publishing mode ---
+	fmt.Fprintln(out, "\n[3/3] Publishing mode:")
+	fmt.Fprintln(out, "      auto    — the server knows about you and hands your bridge out to users")
+	fmt.Fprintln(out, "      private — the server doesn't know about you; you share the link yourself (`ringly-relay link`)")
+	c.Publish.Mode = p.choice("Publishing mode", []string{config.ModeAuto, config.ModePrivate}, c.Publish.Mode)
+	// the registration secret is built into the daemon (config.DefaultEnrollSecret) — not asked
 	if c.Publish.Mode == config.ModeAuto && c.Publish.EnrollSecret == "" {
 		c.Publish.EnrollSecret = config.DefaultEnrollSecret
 	}
-	// Адрес нужен в обоих режимах: в private он попадает в ссылку, в auto — в регистрацию. «Пусть
-	// сервер определит сам» не годится: за Nginx сервер видит адрес прокси, а не этого VPS.
+	// The address is needed in both modes: in private it goes into the link, in auto into the
+	// registration. "Let the server figure it out" doesn't work: behind Nginx the server sees the
+	// proxy's address, not this VPS's.
 	if ipErr != nil {
 		fmt.Fprintf(out, "  ⚠️ %v\n", ipErr)
 	}
-	c.Publish.PublicHost = p.valid("  Публичный адрес этого сервера (IP или домен)",
+	c.Publish.PublicHost = p.valid("  Public address of this server (IP or domain)",
 		firstNonEmpty(c.Publish.PublicHost, publicIP), config.NormalizeHost, validHostOrIP)
 
-	// --- Ключи Reality ---
+	// --- Reality keys ---
 	if c.Bridge.Enabled && c.Reality.PrivateKey == "" {
 		keys, err := bridgelink.GenerateKeys()
 		if err != nil {
@@ -119,7 +121,7 @@ func Run(in io.Reader, out io.Writer, existing *config.Config) (config.Config, e
 		c.Reality.PrivateKey = keys.PrivateKey
 		c.Reality.ShortID = keys.ShortID
 		c.Reality.UUID = keys.UUID
-		fmt.Fprintln(out, "\nСгенерированы ключи Reality и UUID.")
+		fmt.Fprintln(out, "\nGenerated the Reality keys and UUID.")
 	}
 	if c.Calls.Enabled && c.Calls.Secret == "" {
 		secret, err := bridgelink.GenerateSecret()
@@ -127,16 +129,16 @@ func Run(in io.Reader, out io.Writer, existing *config.Config) (config.Config, e
 			return config.Config{}, err
 		}
 		c.Calls.Secret = secret
-		fmt.Fprintln(out, "Сгенерирован секрет TURN.")
+		fmt.Fprintln(out, "Generated the TURN secret.")
 	}
 
 	if err := c.Validate(); err != nil {
-		return config.Config{}, fmt.Errorf("итоговый конфиг некорректен: %w", err)
+		return config.Config{}, fmt.Errorf("the resulting configuration is invalid: %w", err)
 	}
 	return c, nil
 }
 
-// prompt — маленький помощник для чтения ответов с дефолтами.
+// prompt — a small helper for reading answers with defaults.
 type prompt struct {
 	r   *bufio.Reader
 	out io.Writer
@@ -158,7 +160,7 @@ func (p *prompt) line(label, def string) string {
 
 func (p *prompt) text(label, def string) string { return p.line(label, def) }
 
-// valid спрашивает, нормализует ответ и переспрашивает, пока проверка не пройдёт.
+// valid asks, normalizes the answer and asks again until the check passes.
 func (p *prompt) valid(label, def string, normalize func(string) string, check func(string) error) string {
 	for {
 		s := normalize(p.line(label, def))
@@ -173,7 +175,7 @@ func (p *prompt) valid(label, def string, normalize func(string) string, check f
 func normalizeListen(s string) string {
 	s = strings.TrimSpace(s)
 	if _, err := strconv.Atoi(s); err == nil {
-		return ":" + s // «443» → «:443»
+		return ":" + s // "443" → ":443"
 	}
 	return s
 }
@@ -181,14 +183,14 @@ func normalizeListen(s string) string {
 func validListen(s string) error {
 	port, err := config.PortFromListen(s)
 	if err != nil || port < 1 || port > 65535 {
-		return fmt.Errorf("нужен номер порта, например 443")
+		return fmt.Errorf("a port number is required, e.g. 443")
 	}
 	return nil
 }
 
 func validIP(s string) error {
 	if net.ParseIP(s) == nil {
-		return fmt.Errorf("нужен IP-адрес, например 203.0.113.10")
+		return fmt.Errorf("an IP address is required, e.g. 203.0.113.10")
 	}
 	return nil
 }
@@ -208,12 +210,12 @@ func (p *prompt) yesNo(label string, def bool) bool {
 	for {
 		s := strings.ToLower(p.line(label+" (y/n)", d))
 		switch s {
-		case "y", "yes", "д", "да":
+		case "y", "yes":
 			return true
-		case "n", "no", "н", "нет":
+		case "n", "no":
 			return false
 		}
-		fmt.Fprintln(p.out, "  ответьте y или n")
+		fmt.Fprintln(p.out, "  answer y or n")
 	}
 }
 
@@ -224,7 +226,7 @@ func (p *prompt) intVal(label string, def int) int {
 		if err == nil && n >= 0 {
 			return n
 		}
-		fmt.Fprintln(p.out, "  введите неотрицательное число")
+		fmt.Fprintln(p.out, "  enter a non-negative number")
 	}
 }
 
@@ -236,7 +238,7 @@ func (p *prompt) choice(label string, opts []string, def string) string {
 				return o
 			}
 		}
-		fmt.Fprintf(p.out, "  выберите один из: %s\n", strings.Join(opts, ", "))
+		fmt.Fprintf(p.out, "  choose one of: %s\n", strings.Join(opts, ", "))
 	}
 }
 

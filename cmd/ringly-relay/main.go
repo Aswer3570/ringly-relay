@@ -1,12 +1,12 @@
-// Command ringly-relay — демон-ретранслятор Ringly для обхода блокировок.
+// Command ringly-relay — the Ringly relay daemon for getting around blocking.
 //
-// Подкоманды:
+// Subcommands:
 //
-//	setup  — интерактивная настройка, пишет конфиг
-//	run    — запуск по конфигу (под systemd/Docker)
-//	status — что настроено сейчас
-//	doctor — проверка установки по пунктам (sing-box, порт, домен маскировки, сервер Ringly)
-//	link   — печать ссылки-мостика для приватного режима
+//	setup  — interactive setup, writes the configuration
+//	run    — run with the configuration (under systemd/Docker)
+//	status — what is configured now
+//	doctor — step-by-step installation check (sing-box, port, cover domain, Ringly server)
+//	link   — print the bridge link for private mode
 package main
 
 import (
@@ -24,7 +24,7 @@ import (
 	"github.com/ringlymessenger/ringly-relay/internal/status"
 )
 
-// version подставляется линкером при сборке (см. Makefile): -X main.version=...
+// version is set by the linker at build time (see Makefile): -X main.version=...
 var version = "dev"
 
 func main() {
@@ -32,12 +32,12 @@ func main() {
 
 	root := &cobra.Command{
 		Use:           "ringly-relay",
-		Short:         "Демон-ретранслятор Ringly (обход блокировок)",
+		Short:         "Ringly relay daemon (getting around blocking)",
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().StringVarP(&cfgPath, "config", "c", config.DefaultPath, "путь к конфигу")
+	root.PersistentFlags().StringVarP(&cfgPath, "config", "c", config.DefaultPath, "configuration path")
 
 	root.AddCommand(
 		setupCmd(&cfgPath),
@@ -48,7 +48,7 @@ func main() {
 	)
 
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "ошибка:", err)
+		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
@@ -56,11 +56,11 @@ func main() {
 func setupCmd(cfgPath *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "setup",
-		Short: "Интерактивная настройка демона",
+		Short: "Interactive daemon setup",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var existing *config.Config
 			if c, err := config.Load(*cfgPath); err == nil {
-				existing = &c // повторный запуск правит существующий конфиг
+				existing = &c // running again edits the existing configuration
 			}
 			c, err := setup.Run(os.Stdin, os.Stdout, existing)
 			if err != nil {
@@ -69,9 +69,9 @@ func setupCmd(cfgPath *string) *cobra.Command {
 			if err := config.Save(*cfgPath, c); err != nil {
 				return err
 			}
-			fmt.Fprintf(os.Stdout, "\nКонфиг сохранён: %s\n", *cfgPath)
-			fmt.Fprintln(os.Stdout, "Дальше: запустите демон (Docker: docker compose up -d; systemd: systemctl restart ringly-relay)")
-			fmt.Fprintln(os.Stdout, "и проверьте установку: ringly-relay doctor")
+			fmt.Fprintf(os.Stdout, "\nConfiguration saved: %s\n", *cfgPath)
+			fmt.Fprintln(os.Stdout, "Next: start the daemon (Docker: docker compose up -d; systemd: systemctl restart ringly-relay)")
+			fmt.Fprintln(os.Stdout, "and check the installation: ringly-relay doctor")
 			return nil
 		},
 	}
@@ -80,11 +80,11 @@ func setupCmd(cfgPath *string) *cobra.Command {
 func runCmd(cfgPath *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "run",
-		Short: "Запустить демон по конфигу",
+		Short: "Run the daemon with the configuration",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := config.Load(*cfgPath)
 			if err != nil {
-				return fmt.Errorf("%w\nсначала выполните: ringly-relay setup", err)
+				return fmt.Errorf("%w\nrun first: ringly-relay setup", err)
 			}
 			c.StatePath = statePath(*cfgPath)
 			return runner.Run(c, os.Stdout)
@@ -95,11 +95,11 @@ func runCmd(cfgPath *string) *cobra.Command {
 func statusCmd(cfgPath *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Показать текущую конфигурацию",
+		Short: "Show the current configuration",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := config.Load(*cfgPath)
 			if err != nil {
-				return fmt.Errorf("%w\nсначала выполните: ringly-relay setup", err)
+				return fmt.Errorf("%w\nrun first: ringly-relay setup", err)
 			}
 			status.Print(c, os.Stdout)
 			return nil
@@ -107,9 +107,9 @@ func statusCmd(cfgPath *string) *cobra.Command {
 	}
 }
 
-// statePath — где демон хранит своё состояние (токен в пуле). По умолчанию рядом с конфигом: в Docker
-// этот каталог доступен на запись. Под systemd /etc/ringly-relay только для чтения, поэтому юнит
-// задаёт RINGLY_RELAY_STATE_DIR=/var/lib/ringly-relay (StateDirectory).
+// statePath — where the daemon keeps its state (its token in the pool). By default next to the
+// configuration: in Docker that directory is writable. Under systemd /etc/ringly-relay is read-only, so
+// the unit sets RINGLY_RELAY_STATE_DIR=/var/lib/ringly-relay (StateDirectory).
 func statePath(cfgPath string) string {
 	if dir := os.Getenv("RINGLY_RELAY_STATE_DIR"); dir != "" {
 		return filepath.Join(dir, "state.json")
@@ -120,11 +120,11 @@ func statePath(cfgPath string) string {
 func doctorCmd(cfgPath *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
-		Short: "Проверить установку по пунктам",
+		Short: "Check the installation step by step",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := config.Load(*cfgPath)
 			if err != nil {
-				return fmt.Errorf("%w\nсначала выполните: ringly-relay setup", err)
+				return fmt.Errorf("%w\nrun first: ringly-relay setup", err)
 			}
 			if n := doctor.Run(c, os.Stdout); n > 0 {
 				os.Exit(1)
@@ -138,15 +138,15 @@ func linkCmd(cfgPath *string) *cobra.Command {
 	var host string
 	cmd := &cobra.Command{
 		Use:   "link",
-		Short: "Напечатать ссылку-мостик (приватный режим)",
+		Short: "Print the bridge link (private mode)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := config.Load(*cfgPath)
 			if err != nil {
-				return fmt.Errorf("%w\nсначала выполните: ringly-relay setup", err)
+				return fmt.Errorf("%w\nrun first: ringly-relay setup", err)
 			}
 			return link.Print(c, host, os.Stdout)
 		},
 	}
-	cmd.Flags().StringVar(&host, "host", "", "публичный IP или домен демона (по умолчанию — из конфига или определяется сам)")
+	cmd.Flags().StringVar(&host, "host", "", "the daemon's public IP or domain (default: from the configuration or detected)")
 	return cmd
 }

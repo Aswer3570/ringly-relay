@@ -13,7 +13,7 @@ import (
 	"github.com/ringlymessenger/ringly-relay/internal/stats"
 )
 
-// Фейковый Clash API: отдаёт заданные суммы и подключения, проверяет секрет.
+// A fake Clash API: returns the given totals and connections, checks the secret.
 func fakeAPI(t *testing.T, secret string, total *atomic.Int64, ips []string) *singbox.StatsAPI {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -36,7 +36,7 @@ func waitFor(t *testing.T, cond func() bool) {
 	deadline := time.Now().Add(2 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
-			t.Fatal("не дождались")
+			t.Fatal("timed out waiting")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -49,7 +49,7 @@ func TestPollStatsCountsDeltaAndDistinctClients(t *testing.T) {
 
 	var total atomic.Int64
 	total.Store(1000)
-	// три подключения от двух клиентов — клиентов два
+	// three connections from two clients — two clients
 	api := fakeAPI(t, "s3cret", &total, []string{"10.0.0.1", "10.0.0.1", "10.0.0.2"})
 	c := stats.New()
 	done := make(chan struct{})
@@ -57,10 +57,10 @@ func TestPollStatsCountsDeltaAndDistinctClients(t *testing.T) {
 
 	waitFor(t, func() bool { return c.Snapshot().BridgeBytes == 1000 })
 	if got := c.Snapshot().BridgeClients; got != 2 {
-		t.Fatalf("клиентов: ожидали 2, получили %d", got)
+		t.Fatalf("clients: expected 2, got %d", got)
 	}
 
-	// отчёт ушёл; потом sing-box перезапустился — его счёт начался с нуля
+	// the report went out; then sing-box restarted — its count started from zero
 	c.Commit(c.Snapshot())
 	total.Store(300)
 	waitFor(t, func() bool { return c.Snapshot().BridgeBytes == 300 })
@@ -86,9 +86,9 @@ func TestPollStatsWrongSecretCountsNothing(t *testing.T) {
 	time.Sleep(80 * time.Millisecond)
 	close(done)
 	if c.Snapshot().BridgeBytes != 0 || c.Snapshot().BridgeKnown {
-		t.Fatal("без доступа к API ничего не должно считаться")
+		t.Fatal("nothing must be counted without API access")
 	}
 	if logged.Load() != 1 {
-		t.Fatalf("серия сбоев должна логироваться одной строкой, а не %d", logged.Load())
+		t.Fatalf("a series of failures must be logged as one line, not %d", logged.Load())
 	}
 }

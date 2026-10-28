@@ -1,16 +1,18 @@
-// Package publisher — модуль автопубликации: регистрирует демон на control-сервере и шлёт heartbeat.
+// Package publisher — the auto-publishing module: registers the daemon on the control server and
+// sends heartbeats.
 //
-// Реализует runner.Module. Работает только в режиме publish=auto. Регистрация с ретраями в фоне
-// (транзиентная недоступность control не мешает мостику/TURN обслуживать уже известных клиентов);
-// heartbeat раз в минуту.
+// Implements runner.Module. Only active in publish=auto mode. Registration retries in the background
+// (control being briefly unavailable must not stop the bridge/TURN from serving clients they already
+// have); a heartbeat once a minute.
 //
-// Регистрация — ОДИН раз за жизнь установки: токен лежит в файле состояния (cfg.StatePath) и
-// переживает перезапуски. Раньше токен жил только в памяти, а при остановке демон снимал себя с
-// публикации — каждый перезапуск (обновление, перезагрузка VPS, автоперезапуск после падения) был
-// новой регистрацией по общему секрету. Смена секрета на сервере тогда постепенно выбивала все
-// мостики. Теперь секрет нужен только новым установкам. На старте демон шлёт регистрацию СО своим
-// токеном — сервер обновляет его запись (адрес, ключи могли поменяться), а не заводит новую.
-// Сервер токен не узнал (запись удалили) — регистрация заново, а не молчаливое висение вне выдачи.
+// Registration happens ONCE per installation: the token is kept in the state file (cfg.StatePath) and
+// survives restarts. The token used to live only in memory and the daemon unpublished itself on
+// stop — every restart (an update, a VPS reboot, an automatic restart after a crash) was a new
+// registration with the shared secret, so rotating the secret on the server gradually knocked out
+// every bridge. Now only new installations need the secret. On startup the daemon registers WITH its
+// token — the server updates its record (the address or keys may have changed) instead of creating a
+// new one. If the server doesn't recognize the token (the record was deleted), it registers again
+// rather than silently staying out of distribution.
 package publisher
 
 import (
@@ -33,22 +35,22 @@ import (
 	"github.com/ringlymessenger/ringly-relay/internal/stats"
 )
 
-// Переменные, а не константы, — чтобы тесты не ждали минуту.
+// Variables rather than constants — so tests don't wait a minute.
 var (
 	heartbeatInterval = 60 * time.Second
 	registerRetry     = 30 * time.Second
 	httpTimeout       = 15 * time.Second
 )
 
-// state — то, что демон пишет сам (не человек): кто мы в пуле. Control — к какому серверу относится
-// токен: сменили сервер в конфиге — старый токен там ничего не значит.
+// state — what the daemon writes itself (not a person): who we are in the pool. Control — which server
+// the token belongs to: change the server in the configuration and the old token means nothing there.
 type state struct {
 	RelayID    string `json:"relayId"`
 	RelayToken string `json:"relayToken"`
 	Control    string `json:"control"`
 }
 
-// httpError — ответ сервера не 2xx; по коду отличаем «не узнал токен» от прочих сбоев.
+// httpError — a non-2xx server response; the status tells "token not recognized" apart from other failures.
 type httpError struct {
 	path   string
 	status int
@@ -64,30 +66,30 @@ func isUnauthorized(err error) bool {
 	return errors.As(err, &he) && he.status == http.StatusUnauthorized
 }
 
-// Module публикует демон на control-сервере.
+// Module publishes the daemon on the control server.
 type Module struct {
 	cfg      config.Config
 	out      io.Writer
 	client   *http.Client
-	counters *stats.Counters // трафик и подключения — едут в каждом heartbeat (nil — без них)
+	counters *stats.Counters // traffic and connections — sent with every heartbeat (nil — without them)
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
 	mu    sync.Mutex
-	token string // per-relay токен, полученный при регистрации
+	token string // the per-relay token received at registration
 }
 
-// New создаёт модуль публикатора. counters — общие счётчики демона (может быть nil).
+// New creates the publisher module. counters — the daemon's shared counters (may be nil).
 func New(cfg config.Config, out io.Writer, counters *stats.Counters) *Module {
 	return &Module{cfg: cfg, out: out, client: &http.Client{Timeout: httpTimeout}, counters: counters}
 }
 
-// Name — имя модуля для логов runner.
+// Name — the module name for runner logs.
 func (m *Module) Name() string { return "publisher" }
 
-// Start запускает фоновую регистрацию + heartbeat. Возвращается сразу: недоступность control не
-// должна валить демон (мостик/TURN продолжают обслуживать уже известных клиентов).
+// Start launches background registration + heartbeat. Returns right away: control being unavailable
+// must not bring the daemon down (the bridge/TURN keep serving the clients they have).
 func (m *Module) Start(_ context.Context) error {
 	if st, ok := m.loadState(); ok {
 		m.mu.Lock()
@@ -101,8 +103,8 @@ func (m *Module) Start(_ context.Context) error {
 	return nil
 }
 
-// Stop останавливает фон. С публикации НЕ снимаемся: остановка почти всегда — перезапуск, а
-// «живость» сервер и так считает по heartbeat (нет сигнала 3 минуты — мостик не выдаётся).
+// Stop stops the background work. It does NOT unpublish: a stop is almost always a restart, and the
+// server judges liveness by the heartbeat anyway (no signal for 3 minutes — the bridge isn't handed out).
 func (m *Module) Stop(_ context.Context) error {
 	if m.cancel != nil {
 		m.cancel()
@@ -115,29 +117,29 @@ func (m *Module) loop(ctx context.Context) {
 	defer m.wg.Done()
 
 	for {
-		// Регистрация с ретраями. Со своим токеном — это обновление записи, без него — новая.
+		// Registration with retries. With our token it updates the record, without it — a new one.
 		for {
 			err := m.register(ctx)
 			if err == nil {
 				break
 			}
-			fmt.Fprintf(m.out, "[publisher] регистрация не удалась: %v — повтор через %s\n", err, registerRetry)
+			fmt.Fprintf(m.out, "[publisher] registration failed: %v — retrying in %s\n", err, registerRetry)
 			if !sleepCtx(ctx, registerRetry) {
 				return
 			}
 		}
 
-		// heartbeat — до тех пор, пока сервер узнаёт токен
+		// heartbeat — as long as the server recognizes the token
 		if !m.heartbeatLoop(ctx) {
 			return
 		}
-		fmt.Fprintln(m.out, "[publisher] сервер не узнал токен — регистрируюсь заново")
+		fmt.Fprintln(m.out, "[publisher] the server did not recognize the token — registering again")
 		m.forgetToken()
 	}
 }
 
-// heartbeatLoop шлёт heartbeat раз в heartbeatInterval. false — контекст отменён, true — сервер
-// перестал узнавать токен и нужна регистрация заново.
+// heartbeatLoop sends a heartbeat every heartbeatInterval. false — the context was cancelled, true —
+// the server stopped recognizing the token and a new registration is needed.
 func (m *Module) heartbeatLoop(ctx context.Context) bool {
 	t := time.NewTicker(heartbeatInterval)
 	defer t.Stop()
@@ -151,7 +153,7 @@ func (m *Module) heartbeatLoop(ctx context.Context) bool {
 				return true
 			}
 			if err != nil {
-				fmt.Fprintf(m.out, "[publisher] heartbeat не прошёл: %v\n", err)
+				fmt.Fprintf(m.out, "[publisher] heartbeat failed: %v\n", err)
 			}
 		}
 	}
@@ -166,26 +168,26 @@ func (m *Module) register(ctx context.Context) error {
 	token := m.currentToken()
 	err := m.post(ctx, "/relays/register", body, m.cfg.Publish.EnrollSecret, token, &resp)
 	if err != nil && token != "" && isUnauthorized(err) {
-		// токен сервер не знает и секрет не принял — сохранённый токен бесполезен, начнём с чистого
+		// the server doesn't know the token and rejected the secret — the saved token is useless, start clean
 		m.forgetToken()
 	}
 	if err != nil {
 		return err
 	}
 	if resp.RelayToken == "" {
-		return fmt.Errorf("сервер не вернул relayToken")
+		return fmt.Errorf("the server did not return relayToken")
 	}
 	m.mu.Lock()
 	m.token = resp.RelayToken
 	m.mu.Unlock()
 	if err := m.saveState(state{RelayID: resp.RelayID, RelayToken: resp.RelayToken, Control: m.cfg.Origin.Control}); err != nil {
-		// не фатально: работаем, но после перезапуска придётся регистрироваться заново
-		fmt.Fprintf(m.out, "[publisher] ⚠️ не сохранить состояние (%v) — после перезапуска демон зарегистрируется заново\n", err)
+		// not fatal: we keep running, but after a restart we'll have to register again
+		fmt.Fprintf(m.out, "[publisher] ⚠️ could not save state (%v) — after a restart the daemon will register again\n", err)
 	}
 	if token == resp.RelayToken {
-		fmt.Fprintln(m.out, "[publisher] регистрация обновлена на control-сервере")
+		fmt.Fprintln(m.out, "[publisher] registration updated on the control server")
 	} else {
-		fmt.Fprintln(m.out, "[publisher] зарегистрирован на control-сервере")
+		fmt.Fprintln(m.out, "[publisher] registered on the control server")
 	}
 	return nil
 }
@@ -195,15 +197,15 @@ func (m *Module) heartbeat(ctx context.Context) error {
 		Disabled bool `json:"disabled"`
 		Blocked  bool `json:"blocked"`
 	}
-	// Прирост байтов с прошлого успешного отчёта + сколько подключено сейчас. Только числа: кто
-	// подключён, сервер не узнаёт. Не дошёл отчёт — прирост уедет следующим (Commit только после 2xx).
+	// Bytes since the last successful report + how many are connected now. Numbers only: the server
+	// never learns who is connected. A failed report — the increase goes with the next one (Commit only after 2xx).
 	report := m.counters.Snapshot()
 	body := map[string]any{
 		"bridgeBytes": report.BridgeBytes,
 		"callsBytes":  report.CallsBytes,
 		"callsActive": report.CallsActive,
 	}
-	if report.BridgeKnown { // без статистики sing-box число клиентов неизвестно — не врём нулём
+	if report.BridgeKnown { // without sing-box statistics the client count is unknown — don't claim zero
 		body["bridgeClients"] = report.BridgeClients
 	}
 	if err := m.post(ctx, "/relays/heartbeat", body, "", m.currentToken(), &resp); err != nil {
@@ -211,27 +213,27 @@ func (m *Module) heartbeat(ctx context.Context) error {
 	}
 	m.counters.Commit(report)
 	if resp.Blocked {
-		fmt.Fprintln(m.out, "⚠️ [publisher] мостик заблокирован администратором Ringly и пользователям не выдаётся")
+		fmt.Fprintln(m.out, "⚠️ [publisher] the bridge is blocked by the Ringly administrators and is not handed out to users")
 	} else if resp.Disabled {
-		fmt.Fprintln(m.out, "⚠️ [publisher] сервер снял демон с выдачи (вероятно, превышен лимит трафика)")
+		fmt.Fprintln(m.out, "⚠️ [publisher] the server took the daemon out of distribution (probably the traffic limit was exceeded)")
 	}
 	return nil
 }
 
-// registerPayload собирает тело регистрации из конфига (соответствует RegisterRelaySchema бэкенда).
+// registerPayload builds the registration body from the configuration (matches the backend's RegisterRelaySchema).
 func (m *Module) registerPayload() map[string]any {
 	body := map[string]any{
 		"offersBridge": m.cfg.Bridge.Enabled,
 		"offersCalls":  m.cfg.Calls.Enabled,
 	}
-	// Адрес отправляем ВСЕГДА. Если его нет, сервер берёт IP запроса, а перед API стоит Nginx —
-	// сервер увидел бы адрес прокси и раздавал клиентам мостик, до которого не достучаться.
+	// The address is ALWAYS sent. Without it the server takes the request's IP, and Nginx sits in front
+	// of the API — the server would see the proxy's address and hand out a bridge nobody can reach.
 	host := m.cfg.Publish.PublicHost
 	if host == "" {
 		if ip, err := netcheck.PublicIP(); err == nil {
 			host = ip
 		} else {
-			fmt.Fprintf(m.out, "[publisher] ⚠️ публичный адрес не определён (%v) — задайте его в ringly-relay setup\n", err)
+			fmt.Fprintf(m.out, "[publisher] ⚠️ the public address could not be detected (%v) — set it in ringly-relay setup\n", err)
 		}
 	}
 	if host != "" {
@@ -289,7 +291,7 @@ func (m *Module) loadState() (state, bool) {
 	return st, true
 }
 
-// saveState пишет атомарно (временный файл + rename) и только для владельца: токен — пропуск в пул.
+// saveState writes atomically (temporary file + rename) and owner-only: the token is the pass into the pool.
 func (m *Module) saveState(st state) error {
 	if m.cfg.StatePath == "" {
 		return nil
@@ -326,7 +328,7 @@ func (m *Module) currentToken() string {
 	return m.token
 }
 
-// post отправляет JSON и разбирает ответ-конверт бэкенда { success, data, error }, декодируя data в out.
+// post sends JSON and parses the backend's response envelope { success, data, error }, decoding data into out.
 func (m *Module) post(ctx context.Context, path string, body any, enroll, token string, out any) error {
 	req, err := m.newRequest(ctx, http.MethodPost, path, body, enroll, token)
 	if err != nil {
@@ -348,7 +350,7 @@ func (m *Module) post(ctx context.Context, path string, body any, enroll, token 
 		Error   string          `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil {
-		return fmt.Errorf("разбор ответа %s: %w", path, err)
+		return fmt.Errorf("parsing the response of %s: %w", path, err)
 	}
 	if !env.Success {
 		return fmt.Errorf("%s: %s", path, env.Error)
@@ -385,7 +387,7 @@ func (m *Module) newRequest(ctx context.Context, method, path string, body any, 
 	return req, nil
 }
 
-// sleepCtx спит d или возвращает false, если ctx отменён раньше.
+// sleepCtx sleeps for d or returns false if ctx is cancelled first.
 func sleepCtx(ctx context.Context, d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()

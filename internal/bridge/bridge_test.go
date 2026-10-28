@@ -17,10 +17,10 @@ import (
 	"github.com/ringlymessenger/ringly-relay/internal/config"
 )
 
-// Вместо настоящего sing-box тесты запускают САМ тестовый бинарник в роли sing-box (переменная
-// FAKE_SINGBOX): он понимает `check` и `run`, слушает порт из конфига и умеет падать по сценарию.
-// Так проверяется ровно то, что ломалось на живой установке: готовность порта, падение при
-// запуске и падение уже после старта.
+// Instead of the real sing-box the tests run THE TEST BINARY ITSELF as sing-box (the FAKE_SINGBOX
+// variable): it understands `check` and `run`, listens on the configured port and can fail on cue.
+// This checks exactly what broke on a real installation: port readiness, a crash at startup and a
+// crash after startup.
 func TestMain(m *testing.M) {
 	if mode := os.Getenv("FAKE_SINGBOX"); mode != "" {
 		os.Exit(fakeSingbox(mode, os.Args[1:]))
@@ -77,7 +77,7 @@ func fakeSingbox(mode string, args []string) int {
 	return 0
 }
 
-// writeStub — исполняемый «sing-box», который перезапускает тестовый бинарник в нужном режиме.
+// writeStub — an executable "sing-box" that re-runs the test binary in the given mode.
 func writeStub(t *testing.T, mode string) string {
 	t.Helper()
 	self, err := os.Executable()
@@ -87,7 +87,7 @@ func writeStub(t *testing.T, mode string) string {
 	path := filepath.Join(t.TempDir(), "sing-box")
 	script := fmt.Sprintf("#!/bin/sh\nFAKE_SINGBOX=%s exec %q \"$@\"\n", mode, self)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatalf("запись заглушки: %v", err)
+		t.Fatalf("writing the stub: %v", err)
 	}
 	return path
 }
@@ -102,13 +102,13 @@ func freePort(t *testing.T) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
-// stubConfig — валидный конфиг мостика на свободном порту, где вместо sing-box подставлена заглушка.
+// stubConfig — a valid bridge configuration on a free port with the stub in place of sing-box.
 func stubConfig(t *testing.T, singboxPath string) config.Config {
 	t.Helper()
 	c := config.Default()
 	c.Bridge.SingboxPath = singboxPath
 	c.Bridge.Listen = fmt.Sprintf(":%d", freePort(t))
-	c.Reality.SNI = "www.microsoft.com"
+	c.Reality.SNI = "dl.google.com"
 	c.Reality.PrivateKey = "26d5WDpy5OtXi5Z3Dos1me-Z5Zk0ScUxtsitvV4As64"
 	c.Reality.ShortID = "08b992eec8cf3b84"
 	c.Reality.UUID = "11111111-2222-4333-8444-555555555555"
@@ -122,10 +122,10 @@ func TestStartStopLifecycle(t *testing.T) {
 	if err := m.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	// Start вернулся — значит порт уже принимает соединения
+	// Start returned — so the port already accepts connections
 	port, _ := config.PortFromListen(c.Bridge.Listen)
 	if conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port)); err != nil {
-		t.Fatalf("после Start порт не слушается: %v", err)
+		t.Fatalf("the port is not listening after Start: %v", err)
 	} else {
 		conn.Close()
 	}
@@ -139,41 +139,41 @@ func TestStartStopLifecycle(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 	if time.Since(start) > 3*time.Second {
-		t.Fatal("Stop не уложился в ожидаемое время")
+		t.Fatal("Stop took longer than expected")
 	}
 	if _, err := os.Stat(filepath.Dir(confPath)); !os.IsNotExist(err) {
-		t.Fatalf("временный каталог конфига не удалён после Stop: %v", err)
+		t.Fatalf("the temporary configuration directory was not removed after Stop: %v", err)
 	}
 	select {
 	case err := <-m.Failed():
-		t.Fatalf("штатная остановка не должна считаться аварией: %v", err)
+		t.Fatalf("a normal stop must not count as a crash: %v", err)
 	default:
 	}
 }
 
-// Падение при запуске (нет прав на 443) — ошибка Start с выводом sing-box и подсказкой, а не «готов».
+// A crash at startup (no permission for 443) — a Start error with the sing-box output and a hint, not "ready".
 func TestStartFailsWhenSingboxDies(t *testing.T) {
 	c := stubConfig(t, writeStub(t, "denied"))
-	c.Bridge.Listen = ":443" // подсказка про права даётся для привилегированных портов
+	c.Bridge.Listen = ":443" // the permission hint is given for privileged ports
 	err := New(c, io.Discard, nil).Start(context.Background())
 	if err == nil {
-		t.Fatal("ожидалась ошибка: sing-box упал при запуске")
+		t.Fatal("expected an error: sing-box crashed at startup")
 	}
 	for _, want := range []string{"permission denied", "setcap"} {
 		if !strings.Contains(err.Error(), want) {
-			t.Errorf("в ошибке нет %q:\n%v", want, err)
+			t.Errorf("the error lacks %q:\n%v", want, err)
 		}
 	}
 }
 
 func TestStartFailsOnBadConfig(t *testing.T) {
 	err := New(stubConfig(t, writeStub(t, "badconfig")), io.Discard, nil).Start(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "не принял конфиг") {
-		t.Fatalf("ожидалась ошибка sing-box check, получено: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "rejected the configuration") {
+		t.Fatalf("expected a sing-box check error, got: %v", err)
 	}
 }
 
-// Падение уже после старта уходит в Failed() — runner по нему завершит демон.
+// A crash after startup goes to Failed() — the runner exits the daemon on it.
 func TestFailedAfterStart(t *testing.T) {
 	m := New(stubConfig(t, writeStub(t, "dielater")), io.Discard, nil)
 	if err := m.Start(context.Background()); err != nil {
@@ -182,23 +182,23 @@ func TestFailedAfterStart(t *testing.T) {
 	select {
 	case err := <-m.Failed():
 		if !strings.Contains(err.Error(), "inbound crashed") {
-			t.Errorf("в ошибке нет вывода sing-box: %v", err)
+			t.Errorf("the error lacks the sing-box output: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("падение sing-box не дошло до Failed()")
+		t.Fatal("the sing-box crash did not reach Failed()")
 	}
 }
 
 func TestStartMissingBinary(t *testing.T) {
 	m := New(stubConfig(t, "/nonexistent/sing-box-xyz"), io.Discard, nil)
 	if err := m.Start(context.Background()); err == nil {
-		t.Fatal("ожидалась ошибка при отсутствующем бинарнике sing-box")
+		t.Fatal("expected an error with the sing-box binary missing")
 	}
 }
 
 func TestStopWithoutStart(t *testing.T) {
 	m := New(stubConfig(t, writeStub(t, "ok")), io.Discard, nil)
 	if err := m.Stop(context.Background()); err != nil {
-		t.Fatalf("Stop без Start должен быть безопасен, получено: %v", err)
+		t.Fatalf("Stop without Start must be safe, got: %v", err)
 	}
 }

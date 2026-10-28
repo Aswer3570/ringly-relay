@@ -31,15 +31,15 @@ func autoConfig(control string) config.Config {
 	return c
 }
 
-// fakeControl эмулирует control-сервер с конвертом { success, data }.
+// fakeControl emulates the control server with the { success, data } envelope.
 type fakeControl struct {
 	mu            sync.Mutex
 	registerBody  map[string]any
 	enrollHeader  string
-	tokenHeaders  []string // X-Relay-Token каждой регистрации ("" — без токена)
+	tokenHeaders  []string // X-Relay-Token of every registration ("" — without a token)
 	heartbeats    int
 	gotDelete     bool
-	rejectTokenHB bool // heartbeat отвечает 401 — «сервер не узнал токен»
+	rejectTokenHB bool // the heartbeat answers 401 — "the server didn't recognize the token"
 	issued        int
 }
 
@@ -54,7 +54,7 @@ func (f *fakeControl) handler() http.Handler {
 		f.enrollHeader = r.Header.Get("X-Relay-Enroll")
 		tok := r.Header.Get("X-Relay-Token")
 		f.tokenHeaders = append(f.tokenHeaders, tok)
-		if tok == "" { // новая запись — новый токен; со своим токеном — тот же
+		if tok == "" { // a new record — a new token; with its own token — the same one
 			f.issued++
 			tok = "tok-" + string(rune('0'+f.issued))
 		}
@@ -95,7 +95,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	deadline := time.Now().Add(3 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
-			t.Fatalf("не дождались: %s", what)
+			t.Fatalf("timed out waiting for: %s", what)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -111,7 +111,7 @@ func TestPublisherRegisterPayload(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	defer m.Stop(context.Background())
-	waitFor(t, "регистрация", func() bool { return m.currentToken() != "" })
+	waitFor(t, "registration", func() bool { return m.currentToken() != "" })
 
 	fc.mu.Lock()
 	body := fc.registerBody
@@ -119,29 +119,29 @@ func TestPublisherRegisterPayload(t *testing.T) {
 	fc.mu.Unlock()
 
 	if enroll != "enroll-123" {
-		t.Fatalf("enrollment-заголовок = %q, ожидалось enroll-123", enroll)
+		t.Fatalf("enrollment header = %q, expected enroll-123", enroll)
 	}
 	if body["offersBridge"] != true {
-		t.Errorf("offersBridge = %v, ожидалось true", body["offersBridge"])
+		t.Errorf("offersBridge = %v, expected true", body["offersBridge"])
 	}
 	if body["host"] != "203.0.113.7" {
 		t.Errorf("host = %v", body["host"])
 	}
 	br, ok := body["bridge"].(map[string]any)
 	if !ok {
-		t.Fatalf("нет секции bridge в теле регистрации: %v", body)
+		t.Fatalf("no bridge section in the registration body: %v", body)
 	}
 	if br["sni"] != "www.apple.com" || br["port"].(float64) != 443 {
 		t.Errorf("bridge = %v", br)
 	}
-	// publicKey должен быть выведен из приватного ключа, а не пустой
+	// publicKey must be derived from the private key, not empty
 	if pk, _ := br["realityPublicKey"].(string); pk == "" {
-		t.Error("realityPublicKey пуст")
+		t.Error("realityPublicKey is empty")
 	}
 }
 
-// Перезапуск не должен быть новой регистрацией: токен лежит на диске, вторая регистрация идёт С НИМ
-// (сервер обновит запись), а остановка демона не снимает его с публикации.
+// A restart must not be a new registration: the token is on disk, the second registration comes WITH
+// it (the server updates the record), and stopping the daemon doesn't unpublish it.
 func TestPublisherKeepsTokenAcrossRestarts(t *testing.T) {
 	fc := &fakeControl{}
 	srv := httptest.NewServer(fc.handler())
@@ -152,24 +152,24 @@ func TestPublisherKeepsTokenAcrossRestarts(t *testing.T) {
 
 	first := New(cfg, io.Discard, nil)
 	_ = first.Start(context.Background())
-	waitFor(t, "первая регистрация", func() bool { return first.currentToken() != "" })
+	waitFor(t, "first registration", func() bool { return first.currentToken() != "" })
 	_ = first.Stop(context.Background())
 
 	fc.mu.Lock()
 	if fc.gotDelete {
-		t.Error("остановка сняла демон с публикации — после перезапуска это была бы новая регистрация")
+		t.Error("stopping unpublished the daemon — after a restart that would be a new registration")
 	}
 	fc.mu.Unlock()
 	if info, err := os.Stat(cfg.StatePath); err != nil {
-		t.Fatalf("состояние не сохранено: %v", err)
+		t.Fatalf("state was not saved: %v", err)
 	} else if info.Mode().Perm() != 0o600 {
-		t.Errorf("права на состояние %v, ожидалось 0600 (там токен)", info.Mode().Perm())
+		t.Errorf("state permissions %v, expected 0600 (it holds the token)", info.Mode().Perm())
 	}
 
 	second := New(cfg, io.Discard, nil)
 	_ = second.Start(context.Background())
 	defer second.Stop(context.Background())
-	waitFor(t, "повторная регистрация", func() bool {
+	waitFor(t, "second registration", func() bool {
 		fc.mu.Lock()
 		defer fc.mu.Unlock()
 		return len(fc.tokenHeaders) == 2
@@ -177,14 +177,14 @@ func TestPublisherKeepsTokenAcrossRestarts(t *testing.T) {
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 	if fc.tokenHeaders[0] != "" || fc.tokenHeaders[1] != "tok-1" {
-		t.Fatalf("токены регистраций = %q, ожидалось [\"\" \"tok-1\"] — перезапуск должен прийти со своим токеном", fc.tokenHeaders)
+		t.Fatalf("registration tokens = %q, expected [\"\" \"tok-1\"] — a restart must come with its own token", fc.tokenHeaders)
 	}
 	if fc.issued != 1 {
-		t.Errorf("выдано токенов %d, ожидался 1 — перезапуск завёл новую запись", fc.issued)
+		t.Errorf("tokens issued %d, expected 1 — the restart created a new record", fc.issued)
 	}
 }
 
-// Сервер перестал узнавать токен (запись удалили) — демон регистрируется заново сам, а не висит вне выдачи.
+// The server stopped recognizing the token (the record was deleted) — the daemon registers again by itself instead of staying out of distribution.
 func TestPublisherReRegistersWhenTokenRejected(t *testing.T) {
 	heartbeatInterval = 20 * time.Millisecond
 	defer func() { heartbeatInterval = 60 * time.Second }()
@@ -196,16 +196,16 @@ func TestPublisherReRegistersWhenTokenRejected(t *testing.T) {
 	m := New(autoConfig(srv.URL), io.Discard, nil)
 	_ = m.Start(context.Background())
 	defer m.Stop(context.Background())
-	waitFor(t, "регистрация", func() bool { return m.currentToken() == "tok-1" })
+	waitFor(t, "registration", func() bool { return m.currentToken() == "tok-1" })
 
 	fc.mu.Lock()
 	fc.rejectTokenHB = true
 	fc.mu.Unlock()
 
-	waitFor(t, "регистрация заново", func() bool { return m.currentToken() == "tok-2" })
+	waitFor(t, "registration again", func() bool { return m.currentToken() == "tok-2" })
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 	if last := fc.tokenHeaders[len(fc.tokenHeaders)-1]; last != "" {
-		t.Errorf("повторная регистрация пришла с отвергнутым токеном %q", last)
+		t.Errorf("the new registration came with the rejected token %q", last)
 	}
 }

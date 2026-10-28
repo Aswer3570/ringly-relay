@@ -22,7 +22,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	if out != in {
-		t.Fatalf("round-trip не совпал:\n  got  %+v\n  want %+v", out, in)
+		t.Fatalf("round trip mismatch:\n  got  %+v\n  want %+v", out, in)
 	}
 }
 
@@ -32,17 +32,17 @@ func TestValidate(t *testing.T) {
 		mutate  func(*Config)
 		wantErr bool
 	}{
-		{"пустой — нет модулей и ключей", func(c *Config) { *c = Config{} }, true},
-		{"bridge без ключей Reality", func(c *Config) {}, true}, // Default() не содержит ключей
-		{"валидный bridge", func(c *Config) {
+		{"empty — no modules and keys", func(c *Config) { *c = Config{} }, true},
+		{"bridge without Reality keys", func(c *Config) {}, true}, // Default() has no keys
+		{"valid bridge", func(c *Config) {
 			withKeys(c)
-			c.Publish.EnrollSecret = "e" // auto-режим требует секрет регистрации
+			c.Publish.EnrollSecret = "e" // auto mode requires a registration secret
 		}, false},
-		{"неизвестный режим публикации", func(c *Config) {
+		{"unknown publishing mode", func(c *Config) {
 			withKeys(c)
 			c.Publish.Mode = "wat"
 		}, true},
-		{"private-режим без control — ок", func(c *Config) {
+		{"private mode without control — fine", func(c *Config) {
 			withKeys(c)
 			c.Publish.Mode = ModePrivate
 			c.Origin.Control = ""
@@ -60,21 +60,21 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-// withKeys — настоящие по формату ключи Reality (фиктивные "p"/"s"/"u" новая проверка не пропустит).
+// withKeys — Reality keys in a real format (dummy "p"/"s"/"u" would not pass the format checks).
 func withKeys(c *Config) {
 	c.Reality.PrivateKey = "26d5WDpy5OtXi5Z3Dos1me-Z5Zk0ScUxtsitvV4As64"
 	c.Reality.ShortID = "08b992eec8cf3b84"
 	c.Reality.UUID = "11111111-2222-4333-8444-555555555555"
 }
 
-// Следы копирования из Markdown, на которых падала живая установка, — исправляются нормализацией,
-// а без неё отклоняются проверкой с понятной причиной.
+// Markdown copy-paste leftovers that broke a real installation are fixed by normalization and,
+// without it, rejected by validation with a clear reason.
 func TestFormatChecks(t *testing.T) {
 	if got := NormalizeHost(`www\.ozon\.ru`); got != "www.ozon.ru" {
-		t.Errorf("NormalizeHost(экранирование) = %q", got)
+		t.Errorf("NormalizeHost(escaping) = %q", got)
 	}
-	if got := NormalizeHost("https://www.microsoft.com/"); got != "www.microsoft.com" {
-		t.Errorf("NormalizeHost(схема) = %q", got)
+	if got := NormalizeHost("https://dl.google.com/"); got != "dl.google.com" {
+		t.Errorf("NormalizeHost(scheme) = %q", got)
 	}
 	if got := NormalizeURL("[https://api.ringlyapp.net](https://api.ringlyapp.net)"); got != "https://api.ringlyapp.net" {
 		t.Errorf("NormalizeURL(markdown) = %q", got)
@@ -96,7 +96,7 @@ func TestFormatChecks(t *testing.T) {
 		c.Publish.EnrollSecret = "e"
 		mutate(&c)
 		if err := c.Validate(); err == nil {
-			t.Errorf("случай %d: ожидалась ошибка формата", i)
+			t.Errorf("case %d: expected a format error", i)
 		}
 	}
 }

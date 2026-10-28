@@ -1,5 +1,5 @@
-// Package netcheck — сетевые проверки, общие для setup, doctor и link: публичный адрес сервера,
-// пригодность домена для Reality и доступность сервера Ringly.
+// Package netcheck — network checks shared by setup, doctor and link: the server's public address,
+// whether a domain suits Reality and whether the Ringly server is reachable.
 package netcheck
 
 import (
@@ -12,19 +12,19 @@ import (
 	"time"
 )
 
-// PublicIP — адрес, с которого сервер выходит в интернет, без обращения к сторонним сервисам:
-// UDP-«соединение» ничего не отправляет, но ядро выбирает исходящий интерфейс. На обычном VPS
-// публичный адрес висит прямо на интерфейсе. Если адрес внутренний (сервер за NAT), честно
-// возвращаем ошибку — угадывать нельзя: ссылка с чужим адресом не заработает.
+// PublicIP — the address the server goes online from, without asking third-party services: a UDP
+// "connection" sends nothing, but the kernel picks the outgoing interface. On an ordinary VPS the public
+// address sits right on the interface. If the address is internal (the server is behind NAT), return an
+// honest error — guessing is not an option: a link with the wrong address won't work.
 func PublicIP() (string, error) {
 	conn, err := net.Dial("udp", "1.1.1.1:53")
 	if err != nil {
-		return "", fmt.Errorf("нет выхода в интернет: %w", err)
+		return "", fmt.Errorf("no internet access: %w", err)
 	}
 	defer conn.Close()
 	ip := conn.LocalAddr().(*net.UDPAddr).IP
 	if ip.IsPrivate() || ip.IsLoopback() || isCGNAT(ip) {
-		return "", fmt.Errorf("сервер за NAT (адрес интерфейса %s внутренний) — укажите публичный адрес вручную", ip)
+		return "", fmt.Errorf("the server is behind NAT (interface address %s is internal) — enter the public address manually", ip)
 	}
 	return ip.String(), nil
 }
@@ -34,9 +34,9 @@ func isCGNAT(ip net.IP) bool {
 	return cgnat.Contains(ip)
 }
 
-// RealityTarget проверяет, годится ли домен для маскировки: Reality проксирует незнакомцев на
-// настоящий сайт, поэтому он обязан быть доступен С ЭТОГО сервера и уметь TLS 1.3. Иначе мостик
-// поднимется, но клиенты не подключатся — и узнать причину будет неоткуда.
+// RealityTarget checks whether a domain suits the disguise: Reality proxies strangers to the real site,
+// so it must be reachable FROM THIS server and support TLS 1.3. Otherwise the bridge starts but clients
+// can't connect — with no way to find out why.
 func RealityTarget(host string, timeout time.Duration) (time.Duration, error) {
 	start := time.Now()
 	dialer := &net.Dialer{Timeout: timeout}
@@ -47,16 +47,16 @@ func RealityTarget(host string, timeout time.Duration) (time.Duration, error) {
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "protocol version") {
-			return 0, fmt.Errorf("%s не поддерживает TLS 1.3 — для Reality нужен другой домен", host)
+			return 0, fmt.Errorf("%s doesn't support TLS 1.3 — Reality needs another domain", host)
 		}
-		return 0, fmt.Errorf("%s недоступен с этого сервера по TLS 1.3: %w", host, err)
+		return 0, fmt.Errorf("%s is unreachable from this server over TLS 1.3: %w", host, err)
 	}
 	conn.Close()
 	return time.Since(start), nil
 }
 
-// Origin проверяет, что сервер Ringly отвечает (GET /health). Любой HTTP-ответ означает, что сеть
-// до него есть; не-2xx отдельно — сервер жив, но нездоров.
+// Origin checks that the Ringly server responds (GET /health). Any HTTP response means the network path
+// exists; a non-2xx is reported separately — the server is alive but unhealthy.
 func Origin(ctx context.Context, origin string, timeout time.Duration) (time.Duration, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -67,20 +67,20 @@ func Origin(ctx context.Context, origin string, timeout time.Duration) (time.Dur
 	start := time.Now()
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("сервер Ringly недоступен с этого VPS: %w", err)
+		return 0, fmt.Errorf("the Ringly server is unreachable from this VPS: %w", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return time.Since(start), fmt.Errorf("сервер Ringly ответил %d", resp.StatusCode)
+		return time.Since(start), fmt.Errorf("the Ringly server answered %d", resp.StatusCode)
 	}
 	return time.Since(start), nil
 }
 
-// Listening — принимает ли кто-то соединения на локальном порту.
+// Listening — whether anything accepts connections on a local port.
 //
-// На Linux смотрим таблицу сокетов ядра, а не подключаемся: для Reality пустое подключение —
-// «чужак», и sing-box писал бы в журнал ERROR «REALITY: processed invalid connection» при каждом
-// старте и каждом doctor — пугающе для волонтёра, хотя всё в порядке.
+// On Linux we read the kernel socket table instead of connecting: for Reality an empty connection is a
+// "stranger", and sing-box would log ERROR "REALITY: processed invalid connection" on every start and
+// every doctor run — scary for a volunteer, although everything is fine.
 func Listening(port int) bool {
 	if listening, ok := listeningInKernel(port); ok {
 		return listening

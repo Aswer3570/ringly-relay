@@ -12,10 +12,10 @@ func TestKeysRoundTrip(t *testing.T) {
 		t.Fatalf("PublicFromPrivate: %v", err)
 	}
 	if pub != keys.PublicKey {
-		t.Fatalf("публичный ключ, выведенный из приватного, не совпал:\n  got  %s\n  want %s", pub, keys.PublicKey)
+		t.Fatalf("the public key derived from the private one does not match:\n  got  %s\n  want %s", pub, keys.PublicKey)
 	}
-	if len(keys.ShortID) != 16 { // 8 байт → 16 hex-символов
-		t.Fatalf("short_id длина %d, ожидалось 16", len(keys.ShortID))
+	if len(keys.ShortID) != 16 { // 8 bytes → 16 hex characters
+		t.Fatalf("short_id length %d, expected 16", len(keys.ShortID))
 	}
 }
 
@@ -25,7 +25,7 @@ func TestDescriptorRoundTrip(t *testing.T) {
 		Port:      443,
 		PublicKey: "JGiyWleKke7suoXKMwujFww0OzyudctAlPjvr2z0bRc",
 		ShortID:   "08b992eec8cf3b84",
-		SNI:       "www.microsoft.com",
+		SNI:       "dl.google.com",
 		Msg:       true,
 		Calls:     true,
 		Geo:       "RU",
@@ -39,12 +39,12 @@ func TestDescriptorRoundTrip(t *testing.T) {
 		t.Fatalf("Decode: %v", err)
 	}
 	if out != in {
-		t.Fatalf("round-trip не совпал:\n  got  %+v\n  want %+v", out, in)
+		t.Fatalf("round trip mismatch:\n  got  %+v\n  want %+v", out, in)
 	}
 }
 
 func TestDecodeRejectsGarbage(t *testing.T) {
 	if _, err := Decode("https://example.com/not-a-bridge"); err == nil {
-		t.Fatal("ожидалась ошибка на ссылке без префикса схемы")
+		t.Fatal("expected an error for a link without the scheme prefix")
 	}
 }

@@ -1,8 +1,8 @@
 #!/bin/sh
-# Каталог конфига монтируется с хоста (./config), и Docker создаёт его от root — пользователь демона
-# не мог туда записать, и `setup` в контейнере падал. Поэтому стартуем от root, отдаём каталог
-# пользователю ringly-relay и сразу сбрасываем права. Сам демон root не получает: порт 443 sing-box
-# слушает по file capability (см. Dockerfile).
+# The config directory is mounted from the host (./config), and Docker creates it as root — so the
+# daemon's user couldn't write to it. We start as root, hand the directory to the ringly-relay user
+# and drop privileges right away. The daemon itself never gets root: sing-box listens on 443 via a
+# file capability (see the Dockerfile).
 set -e
 
 if [ "$(id -u)" = "0" ]; then

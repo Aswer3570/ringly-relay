@@ -1,5 +1,5 @@
 [Unit]
-Description=Ringly Relay — демон-ретранслятор для обхода блокировок
+Description=Ringly Relay — volunteer relay daemon for getting around blocking
 After=network-online.target
 Wants=network-online.target
 
@@ -9,20 +9,20 @@ ExecStart=/usr/local/bin/ringly-relay run -c /etc/ringly-relay/config.toml
 Restart=on-failure
 RestartSec=5
 
-# Права на порт 443/3478 без root: разрешаем только биндинг привилегированных портов,
-# всё остальное — под непривилегированным пользователем.
+# Ports 443/3478 without root: only binding privileged ports is allowed,
+# everything else runs as an unprivileged user.
 User=ringly-relay
 Group=ringly-relay
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
-# Изоляция: демону не нужен доступ к ФС, кроме своего конфига.
+# Isolation: the daemon needs no filesystem access beyond its own config.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadOnlyPaths=/etc/ringly-relay
-# Состояние (токен регистрации в пуле) пишет сам демон — ему нужен каталог на запись
+# The daemon writes its state (the pool registration token) — it needs a writable directory
 StateDirectory=ringly-relay
 StateDirectoryMode=0700
 Environment=RINGLY_RELAY_STATE_DIR=/var/lib/ringly-relay

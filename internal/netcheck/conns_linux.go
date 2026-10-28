@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-// EstablishedOn — сколько установленных TCP-соединений на локальном порту прямо сейчас.
-// Только число: адреса клиентов мы не смотрим и не логируем — это IP пользователей.
+// EstablishedOn — how many established TCP connections there are on a local port right now. Only the
+// number: we neither look at nor log client addresses — those are users' IPs.
 func EstablishedOn(port int) (int, bool) {
 	return countState(port, "01") // 01 = ESTABLISHED
 }
@@ -30,10 +30,10 @@ func countState(port int, state string) (int, bool) {
 		}
 		ok = true
 		sc := bufio.NewScanner(f)
-		sc.Scan() // заголовок
+		sc.Scan() // header
 		for sc.Scan() {
 			fields := strings.Fields(sc.Text())
-			// local_address — поле 1, состояние — поле 3
+			// local_address is field 1, the state is field 3
 			if len(fields) > 3 && strings.HasSuffix(fields[1], want) && fields[3] == state {
 				total++
 			}

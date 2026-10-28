@@ -12,19 +12,19 @@ import (
 	"time"
 )
 
-// selfSignedCert генерирует эфемерный самоподписанный сертификат для TURN-over-TLS.
+// selfSignedCert generates an ephemeral self-signed certificate for TURN over TLS.
 //
-// ⚠️ Он даёт шифрование транспорта (позволяет пройти там, где UDP зарезан), но НЕ маскировку под
-// конкретный HTTPS-сайт: сертификат самоподписанный. Для полноценной маскировки оператору стоит
-// указать настоящий сертификат (tls_cert/tls_key). Об этом сказано и в setup, и в README.
+// ⚠️ It gives transport encryption (gets through where UDP is cut off) but does NOT disguise the relay
+// as a particular HTTPS site: the certificate is self-signed. For a full disguise the operator should
+// set a real certificate (tls_cert/tls_key).
 func selfSignedCert(cn string) (tls.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("генерация ключа сертификата: %w", err)
+		return tls.Certificate{}, fmt.Errorf("generating the certificate key: %w", err)
 	}
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("серийный номер: %w", err)
+		return tls.Certificate{}, fmt.Errorf("serial number: %w", err)
 	}
 	tmpl := x509.Certificate{
 		SerialNumber:          serial,
@@ -38,7 +38,7 @@ func selfSignedCert(cn string) (tls.Certificate, error) {
 	}
 	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("создание сертификата: %w", err)
+		return tls.Certificate{}, fmt.Errorf("creating the certificate: %w", err)
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
 }
